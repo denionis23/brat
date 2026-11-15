@@ -13,6 +13,8 @@ TMP = _scratch.mkdtemp(prefix='brat-mem-')
 # released yet, so the leak check stays off.
 ASAN = {'ASAN_OPTIONS': 'detect_leaks=0'}
 
+RUN_LINE = {'trunc_utf8': 2}
+
 # name: (data file, bytes, move_rt, source, want_stdout, want_stderr)
 CASES = {
     # A lone lead byte is a truncated 4-byte sequence.
@@ -270,7 +272,7 @@ for name, case in CASES.items():
         env.pop('BRAT_MOVE_RT', None)
 
     ip = subprocess.run(_cxx.run_args(path),
-                        capture_output=True, text=True, env=env, timeout=120)
+                        capture_output=True, text=True, env=env, timeout=120, cwd=TMP)
 
     em = subprocess.run(_cxx.run_args('emit-c', path),
                         capture_output=True, text=True, env=env, timeout=120)
@@ -299,12 +301,90 @@ for name, case in CASES.items():
           '%s native ASan: %s' % (name, np.stderr[:300]))
     check(ip.stdout == want_out, '%s run_o0 out=%r want=%r'
           % (name, ip.stdout[:120], want_out))
-    check(ip.stderr == want_err, '%s run_o0 err=%r want=%r'
-          % (name, ip.stderr[:120], want_err))
+    # `brat run` names the file and line of an unhandled error; the emitted C
+    # does not.
+    want_run_err = want_err
+    if name in RUN_LINE:
+        want_run_err = want_err[:-1] + ' at %s.brat:%d\n' % (name, RUN_LINE[name])
+    check(ip.stderr == want_run_err, '%s run_o0 err=%r want=%r'
+          % (name, ip.stderr[:120], want_run_err))
     check(np.stdout == want_out, '%s native out=%r want=%r'
           % (name, np.stdout[:120], want_out))
     check(np.stderr == want_err, '%s native err=%r want=%r'
           % (name, np.stderr[:120], want_err))
+
+# An unhandled error at the top level releases what the top level holds. The
+# build is -O1 because at -O0 the stack still points at what was left behind
+# and the leak check cannot see it. `failed_let` binds the error itself before
+# the error is noticed, which a release after the report would free twice.
+TOP_FAIL = {
+    'held': (
+        'let m = {"k": ["held in a map, long enough for the heap"]}\n'
+        'let v = [1]\n'
+        'print(v[3])\n',
+        '', "unhandled: Err('index out of range')\n"),
+    'block_locals': (
+        'let outer = ["outer value, long enough for the heap"]\n'
+        'if len(outer) == 1 {\n'
+        '  let inner = [outer[0] + "/inner"]\n'
+        '  let m = {"a": inner}\n'
+        '  print(len(m))\n'
+        '  print(inner[9])\n'
+        '}\n',
+        '1\n', "unhandled: Err('index out of range')\n"),
+    'failed_let': (
+        'let mut acc = []\n'
+        'let mut i = 0\n'
+        'while true {\n'
+        '  acc.push("grown item {i}, long enough for the heap")\n'
+        '  i = i + 1\n'
+        '  if i > 5 {\n'
+        '    let last = acc[i]\n'
+        '    print(last)\n'
+        '  }\n'
+        '}\n',
+        '', "unhandled: Err('index out of range')\n"),
+    'moved_and_caught': (
+        'let a = ["moved away, long enough for the heap"]\n'
+        'let b = move a\n'
+        'try {\n'
+        '  print(b[4])\n'
+        '} catch e {\n'
+        '  print("caught {e}")\n'
+        '}\n'
+        'let z = len(b) - 1\n'
+        'print(10 / z)\n',
+        'caught index out of range\n', "unhandled: Err('div by zero')\n"),
+    'main_raises': (
+        'let table = {"k": ["held while main runs, long enough for the heap"]}\n'
+        'fn main() -> i64 {\n'
+        '  let local = [table["k"][0] + " local"]\n'
+        '  return 10 / (len(local) - 1)\n'
+        '}\n',
+        '', "unhandled: Err('div by zero')\n"),
+}
+LEAKS = {'ASAN_OPTIONS': 'detect_leaks=%d' % (1 if sys.platform.startswith('linux') else 0)}
+for name, (src, want_out, want_err) in TOP_FAIL.items():
+    path = os.path.join(TMP, 'top_' + name + '.brat')
+    with open(path, 'w', encoding='utf-8') as f:
+        f.write(src)
+    for lvl in ('-O0', '-O2'):
+        em = subprocess.run(_cxx.cli_args('emit-c', lvl, path), capture_output=True, text=True, timeout=120)
+        check(em.returncode == 0, 'top %s %s emit: %s' % (name, lvl, em.stderr[-300:]))
+        if em.returncode != 0:
+            continue
+        cfile = os.path.join(TMP, 'top_%s%s.c' % (name, lvl))
+        exe = os.path.join(TMP, 'top_%s%s.exe' % (name, lvl))
+        with open(cfile, 'w', encoding='utf-8') as f:
+            f.write(em.stdout)
+        rb = TC.cc_cached(SPEC.argv(cfile, exe) + ['-fsanitize=address', '-g', '-O1', '-I', ENGINE, '-lm'],
+                          cfile, exe)
+        check(rb.returncode == 0, 'top %s %s build: %s' % (name, lvl, (rb.stdout + rb.stderr)[-300:]))
+        if rb.returncode != 0:
+            continue
+        np = subprocess.run([exe], capture_output=True, text=True, env=dict(os.environ, **LEAKS), timeout=120)
+        check(np.returncode == 1 and np.stdout == want_out and np.stderr == want_err,
+              'top %s %s: rc=%d out=%r err=%r' % (name, lvl, np.returncode, np.stdout[:120], np.stderr[:400]))
 
 if bad:
     print('---- RUNTIME MEM FAIL (%d/%d)' % (bad, asserts))

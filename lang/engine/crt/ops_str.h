@@ -1725,7 +1725,7 @@ BFN Val verr_leave(void) {
    envelope immediately while returning an owned reference to the payload. */
 BFN Val verr_catch_part(void) {
     Val e = verr_take();
-    _verr_line = 0;
+    _verr_at = NULL;
     Val out = vnil();
     if (e.tag == V_TAG && e.as.tv && e.as.tv->len) out = vrc_inc(e.as.tv->items[0]);
     vrelease(e);
@@ -1733,7 +1733,7 @@ BFN Val verr_catch_part(void) {
 }
 BFN void verr_catch_discard(void) {
     Val e = verr_take();
-    _verr_line = 0;
+    _verr_at = NULL;
     vrelease(e);
 }
 BFN void vunwind_do(void) { _verr_pending = 1; _verr_exc = 1; }
@@ -1748,7 +1748,7 @@ BFN void vraise(const char *msg) {
     vec_push(a, vstr(_verror_text(msg)));
     vunwind = vtagv("err", a);
     barena_depth = saved;
-    _verr_line = _btrace_cur_line;
+    _verr_at = _btrace_cur;
     _verr_pending = 1;
     _verr_exc = 1;
 }
@@ -1793,7 +1793,7 @@ BFN void vraisev(Val v) {
     vec_push(a, v);  /* error channel outlives any active arena */
     vunwind = vtagv("err", a);
     barena_depth = saved;
-    if (!was_pending) _verr_line = _btrace_cur_line;
+    if (!was_pending) _verr_at = _btrace_cur;
     _verr_pending = 1;
     _verr_exc = 0;
 }
@@ -2522,8 +2522,10 @@ BFN void bexit_track_val(Val *vp) {
     if (_bexit_roots_n < BEXIT_ROOTS_MAX) _bexit_roots[_bexit_roots_n++] = vp;
 }
 BFN void bexit_untrack_all(void) { _bexit_roots_n = 0; _bexit_main_args = 0; }
-BFN Val vexit(Val v) {
-    int code = (int)vlong(v);
+/* Two ways out skip the end of `main`, where the top level lets go of what it
+   holds: `exit()` and an unhandled error. Both release it here. A root is
+   emptied as it is released, so a release that follows finds nothing. */
+BFN void bexit_release(void) {
     for (int i = _bexit_roots_n - 1; i >= 0; i--) {
         Val *vp = _bexit_roots[i];
         if (vp && vp->tag != V_MOVED) {
@@ -2538,6 +2540,10 @@ BFN Val vexit(Val v) {
         _bexit_main_args = 0;
         vrc_dec(vvecv(ma));
     }
+}
+BFN Val vexit(Val v) {
+    int code = (int)vlong(v);
+    bexit_release();
     exit(code);
 }
 BFN void veprint(Vec *a) {

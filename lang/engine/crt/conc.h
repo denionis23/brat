@@ -1136,7 +1136,7 @@ BFN void vdfreset(bint base) {
             /* Run the defer even while an error is unwinding, then restore it
              * unless the defer itself raised an uncaught error. */
             int sp = _verr_pending, se = _verr_exc;
-            bint sline = _verr_line;
+            const BLoc *sline = _verr_at;
             Val sv_unw = sp ? vunwind : vnil();
             Val ab[1];
             BStackVec sv;
@@ -1152,7 +1152,7 @@ BFN void vdfreset(bint base) {
             }
             _verr_pending = sp;
             _verr_exc = se;
-            _verr_line = sline;
+            _verr_at = sline;
             vunwind = sv_unw;
         }
         /* The frame and its closures belong to this call: a function with a
@@ -1768,15 +1768,15 @@ static void btask_run(BTask *t) {
     VScope *outer_scope = _vscope_top;
     int outer_pending = _verr_pending;
     int outer_exc = _verr_exc;
-    bint outer_line = _verr_line;
-    bint outer_trace_line = _btrace_cur_line;
+    const BLoc *outer_line = _verr_at;
+    const BLoc *outer_trace_line = _btrace_cur;
     Val outer_unwind = outer_pending ? vunwind : vnil();
     g_btask_self = 1;
     barena_depth = 0;
     _vscope_top = t->scope;
     _verr_pending = 0;
     _verr_exc = 0;
-    _verr_line = 0;
+    _verr_at = NULL;
     vunwind = vnil();
     if (t->batch_slots) {
         Val ab[1];
@@ -1837,8 +1837,8 @@ static void btask_run(BTask *t) {
     vunwind = outer_unwind;
     _verr_pending = outer_pending;
     _verr_exc = outer_exc;
-    _verr_line = outer_line;
-    _btrace_cur_line = outer_trace_line;
+    _verr_at = outer_line;
+    _btrace_cur = outer_trace_line;
     g_btask_self = outer;
     barena_depth = outer_arena;
     _vscope_top = outer_scope;

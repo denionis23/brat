@@ -20,6 +20,7 @@
 #include <cstdio>
 #include <cstring>
 #include <deque>
+#include <filesystem>
 #include <functional>
 #include <map>
 #include <optional>
@@ -226,6 +227,14 @@ static const std::map<std::string, std::string> &ffi_scalar_c() {
         {"ptr", "void *"},
     };
     return t;
+}
+
+// A traced statement names its file by the full path, in one spelling on every
+// system. The working directory stays out of it so that the emitted C, and the
+// run cache keyed by it, is the same wherever `brat` is started; the runtime
+// shortens the path when it prints it.
+static std::string trace_path(const std::string &file) {
+    return std::filesystem::path(file).generic_string();
 }
 
 // C literal body for a string: escapes only what has to be escaped. Bytes above
@@ -777,6 +786,21 @@ struct Emitter {
         if (!debug_lines || s.line <= 0) return;
         emit_dbg_loc(s.line, lookup_stmt_file(&s));
     }
+    // The (file, line) pairs a traced statement can name. The table has to
+    // come before the code that indexes it and is complete only after that
+    // code is emitted, so a line is reserved for it and filled at the end.
+    std::vector<std::pair<std::string, int>> trace_locs;
+    std::map<std::pair<std::string, int>, size_t> trace_loc_ix;
+    size_t trace_locs_idx = 0;
+    std::string trace_stmt(const Stmt &s) {
+        const auto key = std::make_pair(lookup_stmt_file(&s), s.line);
+        auto it = trace_loc_ix.find(key);
+        if (it == trace_loc_ix.end()) {
+            it = trace_loc_ix.emplace(key, trace_locs.size()).first;
+            trace_locs.push_back(key);
+        }
+        return cat("btrace_at(&_bl[", it->second, "]);");
+    }
     int fn_code(const std::string &key) {
         auto it = codes.find(key);
         if (it != codes.end()) return it->second;
@@ -1018,6 +1042,8 @@ struct Emitter {
     void run_pipeline();
     void emit_late();
     void emit_main_open();
+    bool top_fail_used = false;
+    std::string top_fail();
     void emit_main_close();
     std::string emit_program();
     std::string val_to_c_struct(const std::string &sname, const std::string &valexpr, bool pin_ret = false);
@@ -2164,9 +2190,7 @@ void Emitter::fprint(const ExprList &args, const std::string &ind) {
 
 void Emitter::fst(const Stmt &s, const std::string &ind) {
     emit_dbg_stmt(s);
-    if (trace_lines && s.line > 0) {
-        ln(ind, cat("btrace_line(", s.line, ");"));
-    }
+    if (trace_lines && s.line > 0) ln(ind, trace_stmt(s));
     switch (s.k) {
     case SK::Let:
     case SK::LetTmp:
@@ -2344,7 +2368,7 @@ void Emitter::emit_fast_fn(const std::string &name) {
     }
     frec = rec_fast.count(name) > 0;
     fself_rec.clear();
-    if (frec && !trace_lines) {
+    if (frec) {
         std::set<std::string> calls;
         for (const Stmt *s : view(decl.body)) collect_calls(*s, calls);
         bool only_self = calls.count(name) > 0;
@@ -6125,7 +6149,7 @@ void Emitter::st(const Stmt &s, const std::string &ind) {
         case SK::Return: case SK::Break: case SK::Continue: case SK::Spawn: case SK::Scope:
         case SK::Defer: case SK::Try:
             emit_dbg_stmt(s);
-            if (trace_lines) ln(ind, cat("btrace_line(", s.line, ");"));
+            if (trace_lines) ln(ind, trace_stmt(s));
             break;
         default:
             break;
@@ -8716,6 +8740,7 @@ void Emitter::emit_late() {
 }
 
 void Emitter::emit_main_open() {
+    top_fail_used = false;
     cur_src_file = root_src_file;
     fn_alias.clear();
     sym.clear();
@@ -8786,13 +8811,23 @@ void Emitter::emit_main_close() {
     if (codes.count("fn:main")) {
         ln("  ", cat("Val __r = ", cfn("fn:main"), "(NULL, _a);"));
         ln("  ", "vrc_dec(vvecv(_a));");
-        ln("  ", "if (verr_pending()) { fprintf(stderr, \"unhandled: \"); vprint_err(verr_take()); "
-                "fprintf(stderr, \"\\n\"); return 1; }");
+        ln("  ", cat("if (verr_pending()) { ", top_fail(), " }"));
     } else {
         // Release `_a` in script mode (no user `main` consumes it).
         ln("  ", "vrc_dec(vvecv(_a));");
     }
-    if (move_rt) emit_scope_drops("  ");
+    // The same slots the normal end releases, for the error exit below. A slot
+    // is emptied when it is released or moved from, so the ones that are gone
+    // by the time of the error cost nothing there.
+    std::vector<std::string> fail_drops;
+    if (move_rt) {
+        for (const auto &name : sorted_sym_names()) {
+            const Sym &sy = sym[name];
+            if (sy.own == Own::Owned && !shared.count(name)) fail_drops.push_back(sy.cn);
+        }
+        fail_drops.insert(fail_drops.end(), catch_cns.begin(), catch_cns.end());
+        emit_scope_drops("  ");
+    }
     ln("  ", "vjoin_all();");
     ln("  ", "if (verr_pending()) { fprintf(stderr, \"unhandled: \"); vprint_err(verr_take()); "
             "fprintf(stderr, \"\\n\"); return 1; }");
@@ -8835,6 +8870,19 @@ void Emitter::emit_main_close() {
         ln("  ", "return 1;");
     }
     ln("  ", "return 0;");
+    if (top_fail_used) {
+        // The releases come before the report. A binding whose right side
+        // failed holds the error itself, unowned, and a release skips the
+        // error only while it is still pending.
+        ln("", "__top_fail:");
+        ln("  ", "bexit_release();");
+        for (const auto &cn : fail_drops) {
+            ln("  ", cat("vrelease(", cn, ");"));
+            ln("  ", cat(cn, " = vnil();"));
+        }
+        ln("  ", "fprintf(stderr, \"unhandled: \"); vprint_err(verr_take()); fprintf(stderr, \"\\n\");");
+        ln("  ", "return 1;");
+    }
     ln("", "}");
 }
 
@@ -9182,6 +9230,10 @@ std::string Emitter::emit_program() {
     ln("", "#include <errno.h>");
     // `offsetof` in the extern-struct layout assertions below.
     ln("", "#include <stddef.h>");
+    trace_locs.clear();
+    trace_loc_ix.clear();
+    trace_locs_idx = out.size();
+    if (trace_lines) ln("", "");
     // C needs a struct defined before the one that holds it by value, and the
     // declaration order in the file is whatever the author wrote.
     std::vector<std::string> sorted_structs;
@@ -9778,6 +9830,12 @@ std::string Emitter::emit_program() {
         if (mask_idx < out.size())
             out[mask_idx] = "#define BRAT_CRT_MASK " + std::to_string(mask) + "u";
     }
+    if (!trace_locs.empty()) {
+        std::string table = "static const BLoc _bl[] = {";
+        for (const auto &[file, line] : trace_locs)
+            table += cat("\n  {\"", clit(trace_path(file)), "\", ", line, "},");
+        out[trace_locs_idx] = table + "\n};";
+    }
     std::string text;
     for (size_t i = 0; i < out.size(); i++) {
         if (i) text.push_back('\n');
@@ -9804,6 +9862,14 @@ std::string Emitter::err_scope_unwind() {
     return out;
 }
 
+// An unhandled error at the top level leaves through the label that releases
+// what the top level holds and then reports the error. A plain `return 1` from
+// the failing statement left all of it allocated.
+std::string Emitter::top_fail() {
+    top_fail_used = true;
+    return "goto __top_fail;";
+}
+
 std::string Emitter::err_bail() {
     std::string rel;
     for (auto it = call_cleanup.rbegin(); it != call_cleanup.rend(); ++it) {
@@ -9816,8 +9882,7 @@ std::string Emitter::err_bail() {
     if (err_goto)
         return cat("{ ", rel, unwind, "goto ", *err_goto, "; }");
     if (fin == "__fin_top")
-        return cat("{ ", rel, unwind, "fprintf(stderr, \"unhandled: \"); vprint_err(verr_take()); "
-                   "fprintf(stderr, \"\\n\"); return 1; }");
+        return cat("{ ", rel, unwind, top_fail(), " }");
     return cat("{ ", rel, unwind, "__ret = verr_leave(); goto ", fin, "; }");
 }
 
@@ -9840,9 +9905,7 @@ std::string Emitter::err_check_line(const std::vector<std::string> &drops) {
     if (err_goto)
         return cat("if (verr_pending()) { ", rel, unwind, "goto ", *err_goto, "; }");
     if (fin == "__fin_top")
-        return cat("if (verr_pending()) { ", rel, unwind,
-                   "fprintf(stderr, \"unhandled: \"); vprint_err(verr_take()); "
-                   "fprintf(stderr, \"\\n\"); return 1; }");
+        return cat("if (verr_pending()) { ", rel, unwind, top_fail(), " }");
     return cat("if (verr_pending()) { ", rel, unwind, "__ret = verr_leave(); goto ", fin, "; }");
 }
 

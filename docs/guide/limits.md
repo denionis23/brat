@@ -299,8 +299,10 @@ SS
 ## Errors nobody caught
 
 An error that reaches the top prints `unhandled: Err('...')` on `stderr` and the
-program exits 1. `--trace-lines` adds `at line N`. Inside `catch e`, `e` is the
-payload itself.
+program exits 1. `brat run` adds ` at file.brat:N`, the statement that was
+running when the error started on its way out; at `-O2` and under `brat build`
+only `--trace-lines` does, and `BRAT_TRACE=0` turns it off. Inside `catch e`,
+`e` is the payload itself.
 
 `brat check` counts the arguments of a built-in method (`"abc".chars(1)` is
 ``method `chars` wants 0 args``) and of the callback it takes. When the receiver

@@ -4,8 +4,8 @@ and the iterative runtime walkers on very deep values.
 Verifies:
   - `brat run -O0` runs the type/borrow/capability gate by default,
     `--no-check` bypasses it for low-level runtime-guard tests, `"--"` forwards
-    argv flags untouched, and `--trace-lines` emits source line numbers on
-    uncaught native runtime crashes, with identical C through both CLI doors.
+    argv flags untouched, and `brat run` below `-O2` or with `--trace-lines`
+    puts the source line on an uncaught runtime error.
   - `brat bindgen` extracts `#define`/enum constants (`pub const`),
     fn-ptr typedefs, fn-ptr struct fields, nested inline structs, and
     `--inline-arrays` fixed-size C struct array fields (`Elem[N]`), proven via
@@ -140,12 +140,62 @@ def test_interp_gate_and_trace_lines():
 
     r_tr = run_cli(["run", "--trace-lines", crash_src])
     check(r_tr.returncode != 0 and r_tr.stdout == "42\n" and "div by zero" in r_tr.stderr
-          and "at line 11" in r_tr.stderr,
+          and r_tr.stderr.endswith("trace_crash.brat:11\n"),
           "--trace-lines must report crash at line 11: out=%r err=%r" % (r_tr.stdout, r_tr.stderr))
 
-    r_notr = run_cli(["run", crash_src])
-    check(r_notr.returncode != 0 and "at line " not in r_notr.stderr,
-          "default build without --trace-lines must have zero line-trace suffix: %r" % r_notr.stderr)
+    for lvl in ([], ["-O1"]):
+        r_def = run_cli(["run"] + lvl + [crash_src])
+        check(r_def.returncode != 0 and r_def.stdout == "42\n"
+              and r_def.stderr.endswith("trace_crash.brat:11\n"),
+              "`brat run` %s must report line 11: out=%r err=%r" % (lvl, r_def.stdout, r_def.stderr))
+
+    r_o2 = run_cli(["run", "-O2", crash_src])
+    check(r_o2.returncode != 0 and "div by zero" in r_o2.stderr and " at " not in r_o2.stderr,
+          "`brat run -O2` must not carry a line: %r" % r_o2.stderr)
+
+    r_off = run_cli(["run", crash_src], env={"BRAT_TRACE": "0"})
+    check(r_off.returncode != 0 and "div by zero" in r_off.stderr and " at " not in r_off.stderr,
+          "BRAT_TRACE=0 must turn the line off: %r" % r_off.stderr)
+
+    built = os.path.join(TMP, "trace_crash.exe")
+    r_b = run_cli(["build", crash_src, "-o", built])
+    r_bx = subprocess.run([built], capture_output=True, text=True, timeout=60)
+    check(r_b.returncode == 0 and r_bx.returncode != 0 and " at " not in r_bx.stderr,
+          "`brat build` must not carry a line: %r %r" % (r_b.stderr, r_bx.stderr))
+
+    # A self-recursive scalar function keeps its register-passed depth budget
+    # when lines are traced, and still names the line that failed.
+    rec_src = write("trace_rec.brat",
+                    "fn down(n: i64) -> i64 {\n"
+                    "  if n == 0 {\n"
+                    "    return 10 / n\n"
+                    "  }\n"
+                    "  return down(n - 1) + 1\n"
+                    "}\n"
+                    "fn sink(n: i64) -> i64 {\n"
+                    "  if n < 0 {\n"
+                    "    return 0\n"
+                    "  }\n"
+                    "  return sink(n + 1) + 1\n"
+                    "}\n"
+                    "fn main() -> i64 {\n"
+                    "  if len(args()) > 0 {\n"
+                    "    print(sink(1))\n"
+                    "  }\n"
+                    "  print(down(50))\n"
+                    "  return 0\n"
+                    "}\n")
+    rec_c = subprocess.run([CXX, "emit-c", "--trace-lines", rec_src],
+                           capture_output=True, text=True, check=True).stdout
+    check(rec_c.count("bint _rem) {") == 2, "traced self-recursion lost its depth register")
+    r_rec = run_cli(["run", rec_src])
+    check(r_rec.returncode != 0 and "Err('div by zero') at " in r_rec.stderr
+          and r_rec.stderr.endswith("trace_rec.brat:3\n"),
+          "traced self-recursion, div by zero: %r" % r_rec.stderr)
+    r_rec = run_cli(["run", rec_src, "--", "deep"])
+    check(r_rec.returncode != 0 and "Err('recursion too deep') at " in r_rec.stderr
+          and r_rec.stderr.endswith("trace_rec.brat:11\n"),
+          "traced self-recursion, depth: %r" % r_rec.stderr)
     print("ok: -O0 gate + --trace-lines")
 
 

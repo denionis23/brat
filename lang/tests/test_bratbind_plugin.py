@@ -661,6 +661,7 @@ int _unlink(const char *);
 BOOL SetHandleInformation(HANDLE, DWORD, DWORD);
 DWORD GetFinalPathNameByHandleA(HANDLE, char *, DWORD, DWORD);
 DWORD GetFinalPathNameByHandleW(HANDLE, wchar_t *, DWORD, DWORD);
+DWORD GetCurrentDirectoryA(DWORD, char *);
 UINT SetErrorMode(UINT);
 HMODULE LoadLibraryExA(const char *, HANDLE, DWORD);
 DWORD GetLastError(void);

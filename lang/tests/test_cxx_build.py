@@ -117,8 +117,9 @@ for name, (src, want, rc) in RUN_CASES.items():
 assert ": 0 error(s)" not in run_native(write(os.path.join(TMP, "quiet.brat"),
                                              RUN_CASES["prints"][0])).stdout
 
-# The cache is keyed by content: editing the source changes the answer, and a
-# second run of the same source does not recompile (no compiler invocation).
+# The cache is keyed by the emitted C: editing the source changes the answer,
+# and a second run of the same source does not recompile (no compiler
+# invocation).
 cached = write(os.path.join(TMP, "cached.brat"),
                'fn main() -> i64 {\n  print("one")\n  return 0\n}\n')
 first = run_native(cached)
@@ -127,8 +128,45 @@ again = run_native(cached)
 assert again.stdout == "one\n", again.stdout
 write(cached, 'fn main() -> i64 {\n  print("two")\n  return 0\n}\n')
 assert run_native(cached).stdout == "two\n"
-entries = [f for f in os.listdir(os.path.join(TMP, "cache", "run")) if not f.endswith(".c")]
-assert len(entries) == len(RUN_CASES) + 2, entries
+
+
+def run_entries():
+    return sorted(f for f in os.listdir(os.path.join(TMP, "cache", "run")) if not f.endswith(".c"))
+
+
+# One entry per case, one for `quiet.brat` and two for the versions of
+# `cached.brat`. `quiet.brat` has the text of the `prints` case and still gets
+# its own entry, because a runtime error names the file it happened in.
+assert len(run_entries()) == len(RUN_CASES) + 3, run_entries()
+
+# The file is part of the key and the directory `brat` is started in is not:
+# the same file run from two places is one entry, and each place sees the
+# shortest name that reaches the file from there.
+FAILS = 'fn main() -> i64 {\n  let v = [1]\n  print(v[3])\n  return 0\n}\n'
+os.makedirs(os.path.join(TMP, "proj", "src"))
+os.makedirs(os.path.join(TMP, "elsewhere"))
+one = write(os.path.join(TMP, "proj", "src", "one.brat"), FAILS)
+before = run_entries()
+for cwd, shown in ((os.path.join(TMP, "proj", "src"), "one.brat"),
+                   (os.path.join(TMP, "proj"), "src/one.brat"),
+                   (TMP, "proj/src/one.brat")):
+    got = subprocess.run([BIN, "run", one], capture_output=True, text=True, timeout=300,
+                         env=env, cwd=cwd)
+    assert got.returncode == 1 and got.stderr == \
+        "unhandled: Err('index out of range') at %s:3\n" % shown, (cwd, got.stderr)
+    assert len(run_entries()) == len(before) + 1, (cwd, run_entries())
+got = subprocess.run([BIN, "run", one], capture_output=True, text=True, timeout=300,
+                     env=env, cwd=os.path.join(TMP, "elsewhere"))
+full = got.stderr.strip().split(" at ")[-1]
+assert full.endswith(":3") and os.path.isabs(full[:-2]) and os.path.samefile(full[:-2], one), got.stderr
+assert len(run_entries()) == len(before) + 1, run_entries()
+
+# The same text under another name is another program as far as its errors go.
+two = write(os.path.join(TMP, "proj", "src", "two.brat"), FAILS)
+got = subprocess.run([BIN, "run", two], capture_output=True, text=True, timeout=300,
+                     env=env, cwd=os.path.join(TMP, "proj", "src"))
+assert got.stderr == "unhandled: Err('index out of range') at two.brat:3\n", got.stderr
+assert len(run_entries()) == len(before) + 2, run_entries()
 
 # A program the checker refuses is refused before anything is compiled.
 bad_run = write(os.path.join(TMP, "run-bad.brat"),

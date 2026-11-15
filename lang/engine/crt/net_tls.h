@@ -17,7 +17,7 @@ static void vraise_err_tag_mode(Val v, int is_exc) {
     }
     vunwind = vtagv("err", a);
     barena_depth = saved;
-    _verr_line = _btrace_cur_line;
+    _verr_at = _btrace_cur;
     _verr_pending = 1;
     _verr_exc = is_exc;
 }
@@ -65,7 +65,7 @@ BFN int vassert2(Val cond, Val msg) {
     vec_push(a, msg);
     vunwind = vtagv("err", a);
     barena_depth = saved;
-    _verr_line = _btrace_cur_line;
+    _verr_at = _btrace_cur;
     vunwind_do();
     return 0;
 }

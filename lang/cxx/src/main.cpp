@@ -438,6 +438,8 @@ int run_process(const std::vector<std::string> &args, int timeout_ms, bool *time
 }
 
 
+static bool default_compile_environment(const std::string &compiler);
+
 static std::string compiler_cache_context(const std::string &compiler) {
     const auto parts = split_compiler_cmd(compiler);
     if (parts.empty()) return {};
@@ -456,12 +458,19 @@ static std::string compiler_cache_context(const std::string &compiler) {
     for (char **entry = environment; entry && *entry; ++entry)
         variables.emplace_back(*entry);
     std::sort(variables.begin(), variables.end());
-    std::string material = resolved.string() + "|" + digest + "|" +
-                           std::filesystem::current_path().string();
+    // The working directory is part of the context only when the compiler can
+    // be handed a path relative to it: through arguments on its command or
+    // through one of the variables that redirect it. The stock compiler gets
+    // absolute paths alone, so an entry made in one directory serves them all.
+    const bool cwd_matters = parts.size() > 1 || !default_compile_environment(compiler);
+    std::string material = resolved.string() + "|" + digest + "|";
+    if (cwd_matters) material += std::filesystem::current_path().string();
     for (size_t i = 1; i < parts.size(); ++i)
         material += "|arg=" + std::to_string(parts[i].size()) + ":" + parts[i];
-    for (const auto &entry : variables)
+    for (const auto &entry : variables) {
+        if (!cwd_matters && (entry.rfind("PWD=", 0) == 0 || entry.rfind("OLDPWD=", 0) == 0)) continue;
         material += "|" + std::to_string(entry.size()) + ":" + entry;
+    }
     return sha256_hex(material);
 }
 
@@ -2196,6 +2205,7 @@ int brat_cli_main(int argc, char **argv) {
             std::fprintf(stderr, "brat run: needs one source file\n");
             return 2;
         }
+        if (opt < 2 && !(tev && tev[0] == '0')) trace_lines = true;
         std::vector<std::string> keep;
         keep.push_back(file);
         for (const auto &a : program_args) keep.push_back(a);

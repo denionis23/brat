@@ -85,16 +85,19 @@ def native(src, name):
     return path, run
 
 
-# a raise in the callback: -O0 and -O2 say the same thing and exit 1
+# a raise in the callback: -O0 and -O2 exit 1 with the same error, and
+# `brat run` adds the file and line of the `raise`
 path, built_run = native(RAISES, "raises")
 run_o0 = subprocess.run(
     _cxx.cli_args("run", "-O0", "--header", HEADER, path), capture_output=True,
-    text=True, timeout=300)
+    text=True, timeout=300, cwd=TMP)
 want_err = "unhandled: Err('bad 2')\n"
 assert run_o0.returncode == 1, "run_o0 rc=%d, want 1 (stdout=%r)" % (run_o0.returncode,
                                                                     run_o0.stdout)
 assert run_o0.stdout == "", "run_o0 printed a value from an abandoned callback: %r" % run_o0.stdout
-assert run_o0.stderr.endswith(want_err), "run_o0 stderr=%r want suffix=%r" % (run_o0.stderr, want_err)
+want_run_err = "unhandled: Err('bad 2') at raises.brat:4\n"
+assert run_o0.stderr.endswith(want_run_err), "run_o0 stderr=%r want suffix=%r" % (run_o0.stderr,
+                                                                                 want_run_err)
 assert "binding(s) proven against" in run_o0.stderr, "FFI proof notice missing: %r" % run_o0.stderr
 assert built_run.returncode == 1, "native rc=%d, want 1 (stdout=%r)" % (built_run.returncode,
                                                                       built_run.stdout)

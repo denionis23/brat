@@ -340,9 +340,12 @@ BFN void vraisef(const char *fmt, const char *arg);
    same helpers on several threads. */
 #define BRAT_MAX_VALUE_DEPTH 2000
 static BTLS bint bval_depth = 0;
-static BTLS bint _btrace_cur_line = 0;
-static BTLS bint _verr_line = 0;
-BFN_HOT void btrace_line(bint ln) { _btrace_cur_line = ln; }
+/* A traced statement stores the address of its row in a table the compiler
+   emits, so the statement costs one store whether or not the row names a file. */
+typedef struct BLoc { const char *file; bint line; } BLoc;
+static BTLS const BLoc *_btrace_cur = NULL;
+static BTLS const BLoc *_verr_at = NULL;
+BFN_HOT void btrace_at(const BLoc *at) { _btrace_cur = at; }
 BFN int vtrace_enabled(void) {
     const char *ev = getenv("BRAT_TRACE");
 #ifdef BRAT_TRACE_DEFAULT
@@ -351,16 +354,50 @@ BFN int vtrace_enabled(void) {
     return (ev && ev[0] && ev[0] != '0');
 #endif
 }
-BFN void vtrace_print_err_line(void) {
-    if (_verr_line > 0 && vtrace_enabled()) {
-        fprintf(stderr, " at line " BINT_FMT, _verr_line);
+/* Only C emitted with line tracking stores a location, so only that C carries
+   the code that prints one. */
+#ifdef BRAT_TRACE_DEFAULT
+static int vtrace_same_ch(char a, char b) {
+#ifdef _WIN32
+    if (a == '\\') a = '/';
+    if (b == '\\') b = '/';
+    return tolower((unsigned char)a) == tolower((unsigned char)b);
+#else
+    return a == b;
+#endif
+}
+/* A file under the working directory is shown relative to it, any other by
+   its full path. The directory is read when the error is printed, so the name
+   is one the user can open from where the program stopped. */
+static const char *vtrace_shown(const char *file) {
+    char cwd[4096];
+#ifdef _WIN32
+    DWORD got = GetCurrentDirectoryA((DWORD)sizeof cwd, cwd);
+    if (got == 0 || got >= sizeof cwd) return file;
+#else
+    if (!getcwd(cwd, sizeof cwd)) return file;
+#endif
+    size_t n = strlen(cwd);
+    while (n > 0 && vtrace_same_ch(cwd[n - 1], '/')) n--;
+    for (size_t i = 0; i < n; i++) {
+        if (!file[i] || !vtrace_same_ch(file[i], cwd[i])) return file;
     }
-    _verr_line = 0;
+    return (file[n] == '/' && file[n + 1]) ? file + n + 1 : file;
+}
+static void vtrace_print_at(const BLoc *at) {
+    if (!at || !vtrace_enabled()) return;
+    if (at->file[0]) fprintf(stderr, " at %s:" BINT_FMT, vtrace_shown(at->file), at->line);
+    else fprintf(stderr, " at line " BINT_FMT, at->line);
+}
+#else
+static void vtrace_print_at(const BLoc *at) { (void)at; }
+#endif
+BFN void vtrace_print_err_line(void) {
+    vtrace_print_at(_verr_at);
+    _verr_at = NULL;
 }
 BFN void vtrace_print_cur_line(void) {
-    if (_btrace_cur_line > 0 && vtrace_enabled()) {
-        fprintf(stderr, " at line " BINT_FMT, _btrace_cur_line);
-    }
+    vtrace_print_at(_btrace_cur);
 }
 
 /* Declared here because `vprint` pre-checks the nesting before it writes. */

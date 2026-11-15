@@ -84,7 +84,60 @@ check(p.returncode == 1 and 'non-exhaustive match' in (p.stdout + p.stderr),
 with open(os.path.join(NEG, 'divz.brat'), 'w', encoding='utf-8') as f:
     f.write('let x = 1\nlet y = 0\nprint(x / y)\n')
 p = run_cxx('run', '--trace-lines', os.path.join(NEG, 'divz.brat'))
-check(p.returncode == 1 and 'at line 3' in p.stderr, 'divz line: ' + (p.stdout + p.stderr)[-300:])
+check(p.returncode == 1 and p.stderr.endswith('divz.brat:3\n'), 'divz line: ' + (p.stdout + p.stderr)[-300:])
+
+# An unhandled error names the file its line belongs to, also when it comes
+# out of an imported module through several calls. The lines are padded so that
+# no two files share one.
+os.makedirs(os.path.join(NEG, 'trace', 'lib'))
+TRACE_FILES = {
+    'lib/low.brat': '\n\n\npub fn ratio(a: i64, b: i64) -> i64 {\n  return a / b\n}\n'
+                    'pub fn load(n: i64) -> Result[i64, str] {\n  if n > 2 {\n'
+                    '    return Err("too big: {n}")\n  }\n  return Ok(n)\n}\n',
+    'lib/mid.brat': 'import low\n' + '\n' * 12 +
+                    'pub fn scaled(a: i64, b: i64) -> i64 {\n  let r = low.ratio(a, b)\n'
+                    '  return r * 2\n}\n'
+                    'pub fn checked(n: i64) -> Result[i64, str] {\n  let v = low.load(n)?\n'
+                    '  return Ok(v + 1)\n}\n',
+    'deep.brat': 'import lib.mid\nfn outer(b: i64) -> i64 {\n  return mid.scaled(8, b)\n}\n'
+                 'print(outer(2))\nprint(outer(0))\n',
+    'question.brat': 'import lib.mid\nfn main() -> Result[i64, str] {\n  let a = mid.checked(1)?\n'
+                     '  let b = mid.checked(7)?\n  print(a + b)\n  return Ok(0)\n}\n',
+    'own.brat': 'import lib.mid\nprint(mid.scaled(8, 2))\nlet v = [1]\nprint(v[3])\n',
+    'again.brat': 'import lib.mid\nfn guarded() -> i64 {\n  try {\n    return mid.scaled(1, 0)\n'
+                  '  } catch e {\n    print("caught {e}")\n  }\n  let v = [1]\n  return v[4]\n}\n'
+                  'print(guarded())\n',
+}
+for rel, text in TRACE_FILES.items():
+    with open(os.path.join(NEG, 'trace', *rel.split('/')), 'w', encoding='utf-8') as f:
+        f.write(text)
+
+
+def run_trace(*cmd, cwd=os.path.join(NEG, 'trace'), env=None):
+    return subprocess.run([CXX, *cmd], capture_output=True, text=True, timeout=120, cwd=cwd, env=env)
+
+
+for src, out, err in (
+        ('deep.brat', '8\n', "unhandled: Err('div by zero') at lib/low.brat:5\n"),
+        ('question.brat', '', "unhandled: Err('too big: 7') at lib/low.brat:9\n"),
+        ('own.brat', '8\n', "unhandled: Err('index out of range') at own.brat:4\n"),
+        ('again.brat', 'caught div by zero\n', "unhandled: Err('index out of range') at again.brat:9\n")):
+    for lvl in ((), ('-O1',)):
+        p = run_trace('run', *lvl, src)
+        check(p.returncode == 1 and p.stdout == out and p.stderr == err,
+              'trace %s %s: out=%r err=%r' % (src, lvl, p.stdout, p.stderr))
+    for cmd, env in ((('run', '-O2', src), None), (('run', src), dict(os.environ, BRAT_TRACE='0'))):
+        p = run_trace(*cmd, env=env)
+        check(p.returncode == 1 and p.stdout == out and p.stderr == err.split(' at ')[0] + '\n',
+              'trace off %s %s: out=%r err=%r' % (src, cmd, p.stdout, p.stderr))
+# From another directory the file is named by a path that still finds it.
+p = run_trace('run', os.path.join('trace', 'deep.brat'), cwd=NEG)
+check(p.stderr == "unhandled: Err('div by zero') at trace/lib/low.brat:5\n", 'trace cwd: %r' % p.stderr)
+# A file outside the working directory keeps its full path.
+p = run_trace('run', os.path.join(NEG, 'trace', 'own.brat'), cwd=os.path.join(NEG, 'trace', 'lib'))
+shown = p.stderr.strip().split(' at ')[-1].rsplit(':', 1)
+check(len(shown) == 2 and shown[1] == '4' and os.path.isabs(shown[0])
+      and os.path.samefile(shown[0], os.path.join(NEG, 'trace', 'own.brat')), 'trace abs: %r' % p.stderr)
 
 with open(os.path.join(NEG, 'tbad.brat'), 'w', encoding='utf-8') as f:
     f.write('fn f(a: i64) -> i64 {\n  return "nope"\n}\nlet x = f(1)\n')
