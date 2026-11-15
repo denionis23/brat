@@ -289,6 +289,26 @@ def test_xplat_preprocess_ffi_and_bundle(cxx: str, tmp: str) -> None:
     assert r_run2.returncode == 0, r_run2.stderr.decode("utf-8", "replace")
     assert not IS_MAC or os.path.islink(top_brat)
 
+    # A precompiled runtime header made by a bundle must not be handed to
+    # another copy of the compiler once the bundle is gone. clang names the
+    # header's path in the precompiled file and fails when it is missing.
+    if not IS_WIN:
+        env = dict(os.environ, BRAT_CACHE=os.path.join(tmp, "pch_cache"))
+        if not IS_MAC and shutil.which("clang"):
+            env["BRAT_CC"] = "clang"
+        progs = []
+        for n in (1, 2, 3):
+            progs.append(os.path.join(tmp, f"pch{n}.brat"))
+            with open(progs[-1], "w", encoding="utf-8") as f:
+                f.write(f"print({n})\n")
+        for prog in progs[:2]:
+            r_b = subprocess.run([top_brat, "run", prog], env=env, capture_output=True, timeout=60)
+            assert r_b.returncode == 0, r_b.stderr.decode("utf-8", "replace")
+        shutil.rmtree(stage)
+        r_c = subprocess.run([cxx, "run", progs[2]], env=env, capture_output=True, timeout=60)
+        assert r_c.returncode == 0, r_c.stderr.decode("utf-8", "replace")
+        assert r_c.stdout == b"3\n", r_c.stdout
+
 
 def main() -> None:
     cxx = find_brat_cxx()

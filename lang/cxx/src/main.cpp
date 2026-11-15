@@ -1398,7 +1398,11 @@ static void maybe_append_crt_pch(const std::string &compiler,
     if (memory_limit)
         pch_flags.push_back("-DBRAT_MEM_BYTES=" + std::to_string(memory_limit));
 
-    std::string mat = "pch2|" + resolved.string() + "|" + cc_digest + "|" + crt_digest + "|" + prelude;
+    // The header is named by its path because clang records that path in the
+    // precompiled file and refuses it once the header is gone: a second copy
+    // of the same runtime gets its own entry.
+    std::string mat = "pch3|" + resolved.string() + "|" + cc_digest + "|" + crt_digest + "|" +
+                      crt_file.generic_string() + "|" + prelude;
     for (const auto &fl : pch_flags) mat += "|" + fl;
     for (const char *ev_name : {"CPATH", "C_INCLUDE_PATH", "COMPILER_PATH",
                                 "GCC_EXEC_PREFIX", "SDKROOT", "MACOSX_DEPLOYMENT_TARGET"}) {
