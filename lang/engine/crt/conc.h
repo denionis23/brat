@@ -577,6 +577,26 @@ BFN Val vdel_at(Val v, Val i) {
     BRAT_CTR_UNLOCK_OBJ(w);
     return r;
 }
+/* Both items stay in the vector, so no reference count moves. The indices
+   follow `v[i]`: a negative one is out of range, not counted from the end. */
+BFN Val vswap(Val v, Val i, Val j) {
+    Vec *w = vvec_of_m(v, "swap");
+    if (verr_pending()) return vunwind;
+    bint a = 0, b = 0;
+    if (!vmeth_int(i, "swap", &a)) return vunwind;
+    if (!vmeth_int(j, "swap", &b)) return vunwind;
+    BRAT_CTR_LOCK_OBJ(w);
+    if (a < 0 || a >= w->len || b < 0 || b >= w->len) {
+        BRAT_CTR_UNLOCK_OBJ(w);
+        vraise("index out of range");
+        return vunwind;
+    }
+    Val t = w->items[a];
+    w->items[a] = w->items[b];
+    w->items[b] = t;
+    BRAT_CTR_UNLOCK_OBJ(w);
+    return vnil();
+}
 BFN Val vslice(Val v, Val a, Val b) {
     Vec *w = vvec_of_m(v, "slice");
     if (verr_pending()) return vunwind;
@@ -1511,6 +1531,7 @@ BFN Val vbuiltin(Val obj, const char *meth, Vec *a) {
         if (!strcmp(meth, "rev")) return vrev(obj);
         if (!strcmp(meth, "ins")) return vins(obj, VARG(a, 0), vrc_inc(VARG(a, 1)));
         if (!strcmp(meth, "del")) return vdel_at(obj, VARG(a, 0));
+        if (!strcmp(meth, "swap")) return vswap(obj, VARG(a, 0), VARG(a, 1));
         if (!strcmp(meth, "slice")) return vslice(obj, VARG(a, 0), VARG(a, 1));
         if (!strcmp(meth, "sum")) return vsum(obj);
         if (!strcmp(meth, "min")) return vmin(obj);

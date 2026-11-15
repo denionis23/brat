@@ -6,8 +6,9 @@ behind. These are the shapes that leaked while containers aliased their
 elements: a vector literal, a map literal, a push of a fresh value, a slice, a
 key list, concatenation, a struct field, a nested vector, an iterator over a
 map, a captured binding, a capture handed to a spawned closure, an error
-carried out of a function, and a value a function returns through an enum
-constructor, a closure call or an uppercase binding.
+carried out of a function, a value a function returns through an enum
+constructor, a closure call or an uppercase binding, and items that `swap`
+exchanges inside a vector.
 """
 import _cxx
 import _scratch
@@ -531,6 +532,177 @@ fn main() -> i64 {
   return 0
 }
 ''', "600 ['g1', 'g2']\n")
+
+CASES["swap_items"] = ('''struct P { name: str }
+
+fn main() -> i64 {
+  let mut total = 0
+  for round in 0..40 {
+    let mut v = ["first {round}", "second {round}", "third {round}"]
+    v.swap(0, 2)
+    v.swap(1, 1)
+    let mut nested = [[round, 1], [round, 2], [round, 3]]
+    nested.swap(0, 1)
+    let mut ps = [P { name: "p {round}" }, P { name: "q {round}" }]
+    ps.swap(1, 0)
+    let mut mixed = ["text {round}", 7, [round], {"k": "v {round}"}]
+    mixed.swap(0, 3)
+    mixed.swap(1, 2)
+    total = total + len(v[0]) + nested[0][1] + len(ps[0].name) + len(mixed[3])
+  }
+  let mut v = ["a", "b", "c"]
+  let r = v.swap(0, 2)
+  print(v, r == None, total)
+  return 0
+}
+''', "['c', 'b', 'a'] true 810\n")
+
+CASES["swap_sorts"] = ('''fn sel_sort(mut v) {
+  let n = len(v)
+  for i in 0..n {
+    let mut least = i
+    for j in i + 1..n {
+      if v[j] < v[least] {
+        least = j
+      }
+    }
+    v.swap(i, least)
+  }
+}
+
+fn sort_ints(mut v: vec[i64]) {
+  let n = len(v)
+  for i in 0..n {
+    for j in 0..n - 1 - i {
+      if v[j] > v[j + 1] {
+        v.swap(j, j + 1)
+      }
+    }
+  }
+}
+
+fn sort_floats(mut v: vec[f64]) {
+  let n = len(v)
+  for i in 0..n {
+    for j in 0..n - 1 - i {
+      if v[j] > v[j + 1] {
+        v.swap(j, j + 1)
+      }
+    }
+  }
+}
+
+fn main() -> i64 {
+  let mut words = []
+  let mut ints: vec[i64] = []
+  let mut floats: vec[f64] = []
+  let mut seed = 12345
+  for i in 0..200 {
+    seed = (seed * 1103515245 + 12345) % 2147483648
+    words.push("w{seed % 1000}")
+    ints.push(seed % 500 - 250)
+    floats.push(f64(seed % 997) / 7.0)
+  }
+  let mut want_words = words.copy()
+  want_words.sort()
+  let mut want_ints = ints.copy()
+  want_ints.sort()
+  let mut want_floats = floats.copy()
+  want_floats.sort()
+  sel_sort(words)
+  sort_ints(ints)
+  sort_floats(floats)
+  print(words == want_words, ints == want_ints, floats == want_floats)
+  print(words[0], words[199], ints[0], ints[199])
+  return 0
+}
+''', 'true true true\nw0 w995 -250 245\n')
+
+CASES["swap_permutations"] = ('''fn permute(mut items, k: i64, mut seen) {
+  if k == 1 {
+    seen[items.join(" ")] = true
+    return 0
+  }
+  permute(items, k - 1, seen)
+  for i in 0..k - 1 {
+    if k % 2 == 0 {
+      items.swap(i, k - 1)
+    } else {
+      items.swap(0, k - 1)
+    }
+    permute(items, k - 1, seen)
+  }
+  return 0
+}
+
+fn main() -> i64 {
+  let mut items = ["north", "east", "south", "west", "up"]
+  let mut seen = {}
+  permute(items, len(items), seen)
+  print(len(seen), seen.has("up west south east north"), len(items))
+  return 0
+}
+''', '120 true 5\n')
+
+CASES["swap_bounds"] = ('''fn attempt(mut v, i, j) -> str {
+  try {
+    v.swap(i, j)
+  } catch e {
+    return "{e}"
+  }
+  return "ok"
+}
+
+fn main() -> i64 {
+  let mut v = ["a {1}", "b {2}", "c {3}"]
+  let mut none = []
+  print(attempt(v, 0, 3))
+  print(attempt(v, 3, 0))
+  print(attempt(v, -1, 0))
+  print(attempt(v, 0, -1))
+  print(attempt(v, 9223372036854775807, 0))
+  print(attempt(none, 0, 0))
+  print(attempt(v, "0", 1))
+  print(attempt(v, 0, 1.0))
+  print(attempt({"a": 1}, 0, 0))
+  print(attempt("text", 0, 1))
+  print(attempt(v, 2, 0))
+  print(v)
+  return 0
+}
+''', "index out of range\nindex out of range\nindex out of range\nindex out of range\nindex out of range\nindex out of range\nmethod `swap`: bad argument\nmethod `swap`: bad argument\nno method swap\nno method swap\nok\n['c 3', 'b 2', 'a 1']\n")
+
+CASES["swap_shared"] = ('''fn rotate(mut v) {
+  v.swap(0, 1)
+  v.swap(1, 2)
+}
+
+fn main() -> i64 {
+  let mut n = 0
+  for round in 0..30 {
+    let mut v = [["a {round}"], ["b {round}"], ["c {round}"]]
+    let flip = fn() {
+      v.swap(0, 2)
+      return len(v)
+    }
+    flip()
+    rotate(v)
+    let gone = v.del(1)
+    v.swap(0, 1)
+    v.push(gone)
+    v.swap(2, 0)
+    n = n + len(v[0][0])
+    let mut m = {"held": v}
+    m["held"].swap(0, 1)
+    n = n + len(m["held"][0][0])
+  }
+  let mut grid = [[1, 2], [3, 4]]
+  grid[0].swap(0, 1)
+  grid.swap(0, 1)
+  print(n, grid)
+  return 0
+}
+''', '220 [[3, 4], [2, 1]]\n')
 
 CASES["vlit_overflow_cached"] = (
     'fn pick() -> str {\n  let mut s = ""\n  for k in 0..3 {\n'

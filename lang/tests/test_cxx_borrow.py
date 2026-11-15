@@ -111,6 +111,12 @@ OWNERSHIP = {
     'unknown_trait.brat': 'impl Shape for Point {\n  fn area(self) -> i64 {\n    return 0\n  }\n}\n',
     'unsafe_move.brat': 'fn f(v: vec[i64]) -> i64 {\n  unsafe {\n    move v\n  }\n  return len(v)\n}\n',
     'unused.brat': 'fn f() -> i64 {\n  let x = 1\n  let y = 2\n  return 0\n}\n',
+    'swap_borrowed.brat': 'fn f() -> i64 {\n  let mut v = ["a", "b", "c"]\n  let t = v[0]\n  v.swap(0, 2)\n  print(t)\n  return 0\n}\n',
+    'swap_immutable.brat': 'fn f() -> i64 {\n  let v = ["a", "b"]\n  v.swap(0, 1)\n  return 0\n}\n',
+    'swap_iter.brat': 'fn f() -> i64 {\n  let mut v = ["a", "b", "c"]\n  for x in v {\n    v.swap(0, 2)\n  }\n  return 0\n}\n',
+    'swap_map_tmp.brat': 'fn f() -> i64 {\n  let mut m = {"a": [1], "b": [2]}\n  let tmp = m["a"]\n  m["a"] = m["b"]\n  print(tmp)\n  return 0\n}\n',
+    'swap_ok.brat': 'fn f(mut v: vec[i64]) -> i64 {\n  let mut w = ["a", "b"]\n  w.swap(0, 1)\n  v.swap(0, 1)\n  let t = w[0]\n  print(t)\n  w.swap(0, 1)\n  return len(w)\n}\n',
+    'swap_through_tmp.brat': 'fn f() -> i64 {\n  let mut v = ["a", "b", "c"]\n  let tmp = v[0]\n  v[0] = v[2]\n  print(tmp)\n  return 0\n}\n',
 }
 
 # Every line `check` prints for the fixture, path shortened to its name.
@@ -403,6 +409,34 @@ EXPECT = {
         'unused.brat: 0 error(s), 2 warning(s)',
         'unused.brat:2: warning: unused var `x`',
         'unused.brat:3: warning: unused var `y`',
+    ],
+    'swap_borrowed.brat': [
+        'swap_borrowed.brat: 1 error(s), 0 warning(s)',
+        'swap_borrowed.brat:4: error: cannot mutate immutable `v` while borrowed by `t`',
+        'swap_borrowed.brat:3: note: borrowed by `t` here',
+    ],
+    'swap_immutable.brat': [
+        'swap_immutable.brat: 1 error(s), 0 warning(s)',
+        'swap_immutable.brat:3: error: cannot mutate immutable `v`: `v.swap` writes through it',
+        'swap_immutable.brat:2: note: `v` declared here without `mut` (help: `let mut v`)',
+    ],
+    'swap_iter.brat': [
+        'swap_iter.brat: 1 error(s), 0 warning(s)',
+        'swap_iter.brat:4: error: cannot mutate `v` while iterating it (hint: collect the writes and apply them after the loop)',
+        'swap_iter.brat:3: note: iterated here by this `for`',
+    ],
+    'swap_map_tmp.brat': [
+        'swap_map_tmp.brat: 1 error(s), 0 warning(s)',
+        'swap_map_tmp.brat:4: error: cannot assign `m` while borrowed by `tmp`',
+        'swap_map_tmp.brat:3: note: borrowed by `tmp` here',
+    ],
+    'swap_ok.brat': [
+        'swap_ok.brat: 0 error(s), 0 warning(s)',
+    ],
+    'swap_through_tmp.brat': [
+        'swap_through_tmp.brat: 1 error(s), 0 warning(s)',
+        'swap_through_tmp.brat:4: error: cannot assign `v` while borrowed by `tmp` (hint: `v.swap(i, j)` exchanges two items of a vector)',
+        'swap_through_tmp.brat:3: note: borrowed by `tmp` here',
     ],
 }
 

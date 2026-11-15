@@ -168,6 +168,7 @@ struct Borrow {
     bool mut = false;
     int line = 0;
     int born = 0;                      // statement index the borrow was taken in
+    bool of_index = false;             // taken by `let t = v[i]`
 };
 
 struct Borrows {
@@ -1273,7 +1274,7 @@ bool iter_conflict(const std::string &root, Errs &errs) {
 }
 
 bool check_write(const std::string &path, Decls &decl, Borrows &borrows, Errs &errs,
-                 bool rebind = false, bool strict = true) {
+                 bool rebind = false, bool strict = true, bool index_store = false) {
     std::string root = root_of(path);
     Decl *d = decl.find(root);
     if (!d) return true;
@@ -1313,7 +1314,11 @@ bool check_write(const std::string &path, Decls &decl, Borrows &borrows, Errs &e
     const std::vector<Borrow> *live = borrows.peek(root);
     if (live && !live->empty()) {
         const Borrow &b = live->back();
-        errs.note("cannot assign `" + root + "` while borrowed by `" + b.name + "`",
+        // `let t = v[i]` followed by `v[i] = v[j]` is the swap through a
+        // temporary, which the element borrow rules out.
+        const std::string hint = index_store && b.of_index
+            ? " (hint: `" + root + ".swap(i, j)` exchanges two items of a vector)" : "";
+        errs.note("cannot assign `" + root + "` while borrowed by `" + b.name + "`" + hint,
                   rel_at(b.line, "borrowed by `" + b.name + "` here"));
         return false;
     }
@@ -2154,7 +2159,7 @@ void walk_stmt(const Stmt &s, Decls &decl, Borrows &borrows, Errs &errs, FnTable
                               b.name + "`",
                           rel_at(b.line, "first borrow `" + b.name + "` here"));
             }
-            prev.push_back(Borrow{s.a, hm, errs.line, errs.idx});
+            prev.push_back(Borrow{s.a, hm, errs.line, errs.idx, e && e->k == EK::Idx});
         }
         if (s.mut && !elem) {
             for (const std::string &src : srcs) {
@@ -2208,7 +2213,8 @@ void walk_stmt(const Stmt &s, Decls &decl, Borrows &borrows, Errs &errs, FnTable
             errs.note("use of undeclared var `" + *base + "`",
                       undeclared_rel(root, nullptr, &decl, &funcs));
         } else {
-            check_write(*base, decl, borrows, errs, false, true);
+            const bool by_number = s.e2 && s.e2->k != EK::Str;
+            check_write(*base, decl, borrows, errs, false, true, by_number);
         }
         return;
     }

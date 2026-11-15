@@ -2704,7 +2704,7 @@ const std::set<std::string> STRVEC_METH = {
     "contains", "parse_int", "replace", "index_of", "repeat", "split_once",
     "chars", "parse_float", "join", "push", "pop", "first", "last", "sort",
     "rev", "ins", "del", "slice", "sum", "min", "max", "enumerate", "copy",
-    "zip", "chunks",
+    "zip", "chunks", "swap",
 };
 
 const std::map<std::string, std::pair<std::string, int>> SV_SIMPLE = {
@@ -2719,6 +2719,7 @@ const std::map<std::string, std::pair<std::string, int>> SV_SIMPLE = {
     {"last", {"vlast", 0}}, {"sort", {"vsort", 0}},
     {"rev", {"vrev", 0}}, {"pop", {"vpop", 0}},
     {"join", {"vjoin", 1}}, {"replace", {"vreplace", 2}},
+    {"swap", {"vswap", 2}},
 };
 
 const std::set<std::string> VBUILTIN_DIRECT = {"del", "copy", "slice"};

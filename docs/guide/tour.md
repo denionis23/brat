@@ -366,21 +366,20 @@ example.brat: 0 type error(s)
 
 The check works on one function at a time, and a borrow ends at its last use.
 There are no lifetime annotations. An element read from a vector without an
-element type is a borrow of the vector, so a swap wants `vec[i64]`:
+element type is a borrow of the vector, so two items change places through
+`swap` and not through a temporary:
 
 ```brat run
 fn main() -> i64 {
-  let mut w: vec[i64] = [3, 1, 2]
-  let tmp = w[0]
-  w[0] = w[2]
-  w[2] = tmp
+  let mut w = ["c", "a", "b"]
+  w.swap(0, 2)
   print(w)
   return 0
 }
 ```
 
 ```output
-[2, 1, 3]
+['b', 'a', 'c']
 ```
 
 The rules, the diagnostics and the known false positives are in

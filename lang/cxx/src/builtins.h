@@ -71,7 +71,7 @@ inline constexpr bool is_insert_mutator(std::string_view m) {
 }
 
 inline constexpr bool is_inplace_mutator(std::string_view m) {
-    return m == "pop" || m == "sort" || m == "sort_by" || m == "del";
+    return m == "pop" || m == "sort" || m == "sort_by" || m == "del" || m == "swap";
 }
 
 inline constexpr bool is_vec_map_mutator(std::string_view m) {
