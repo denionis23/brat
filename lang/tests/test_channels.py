@@ -3,6 +3,8 @@
 Every case runs at -O0 and -O2 and the two stdouts must match byte for byte.
 The memory cases go through AddressSanitizer with leak detection on, because a
 channel that keeps a value nobody reads looks exactly like a working program.
+A `send` or `recv` of `main` that no task is left to answer ends with the error
+of the task that failed.
 """
 import _cxx
 import _scratch
@@ -238,6 +240,130 @@ CASES["closure_called_in_spawn"] = '''fn main() -> i64 {
 }
 '''
 
+# The task fails before its `send`, so nothing will ever arrive. Once every
+# task has ended the wait of `main` ends with that error, as a join would.
+WORK = '''fn work(n: i64) -> i64 {
+  return 10 / n
+}
+
+'''
+
+CASES["task_error_at_recv"] = WORK + '''fn main() -> i64 {
+  let ch = chan(2)
+  spawn {
+    ch.send(work(0))
+  }
+  try {
+    print(ch.recv())
+  } catch e {
+    print(e)
+  }
+  print("done")
+  return 0
+}
+'''
+
+# Caught inside the scope, so the end of the scope has nothing left to raise.
+CASES["task_error_in_scope"] = WORK + '''fn main() -> i64 {
+  let ch = chan(2)
+  scope {
+    spawn {
+      ch.send(work(0))
+    }
+    try {
+      print(ch.recv())
+    } catch e {
+      print(e)
+    }
+  }
+  print("done")
+  return 0
+}
+'''
+
+# What the other task sent is received first.
+CASES["task_error_after_value"] = WORK + '''fn main() -> i64 {
+  let ch = chan(4)
+  spawn {
+    ch.send(work(5))
+  }
+  spawn {
+    ch.send(work(0))
+  }
+  try {
+    print(ch.recv())
+    print(ch.recv())
+  } catch e {
+    print(e)
+  }
+  print("done")
+  return 0
+}
+'''
+
+# The queue is full and its only reader is gone.
+CASES["task_error_at_send"] = WORK + '''fn main() -> i64 {
+  let ch = chan(1)
+  spawn {
+    let n = work(0)
+    print(ch.recv() + n)
+  }
+  try {
+    ch.send(1)
+    ch.send(2)
+    print("not reached")
+  } catch e {
+    print(e)
+  }
+  print(ch.recv())
+  return 0
+}
+'''
+
+# A task is still running when `main` starts to wait, so the wait goes on and
+# gets its value. The error of the other task stays for the join.
+CASES["task_error_waits_for_running"] = '''fn main() -> i64 {
+  let ch = chan(2)
+  spawn {
+    raise("early")
+  }
+  spawn {
+    sleep_ms(200)
+    ch.send(7)
+  }
+  sleep_ms(50)
+  try {
+    print(ch.recv())
+    join_all()
+    print("not reached")
+  } catch e {
+    print(e)
+  }
+  return 0
+}
+'''
+
+# The same failure three hundred times in one process: the task that ends
+# last has to wake `main` in every round.
+CASES["task_error_rounds"] = WORK + '''fn main() -> i64 {
+  let mut caught = 0
+  for round in 0..300 {
+    let ch = chan(1)
+    spawn {
+      ch.send(work(0))
+    }
+    try {
+      print(ch.recv())
+    } catch e {
+      caught += 1
+    }
+    ch.close()
+  }
+  print(caught)
+  return 0
+}
+'''
+
 def build(src, name):
     path = os.path.join(TMP, name + ".brat")
     with open(path, "w", encoding="utf-8") as f:
@@ -277,6 +403,12 @@ WANT = {
     "parent_error_first": "parent\ndone\n",
     "many_live_channels": "4950\n100\n",
     "closure_called_in_spawn": "32\n",
+    "task_error_at_recv": "div by zero\ndone\n",
+    "task_error_in_scope": "div by zero\ndone\n",
+    "task_error_after_value": "2\ndiv by zero\ndone\n",
+    "task_error_at_send": "div by zero\n1\n",
+    "task_error_waits_for_running": "7\nearly\n",
+    "task_error_rounds": "300\n",
 }
 
 for name, src in CASES.items():
@@ -293,6 +425,23 @@ native = subprocess.run([exe], capture_output=True, text=True, timeout=10,
                         env=dict(os.environ, BRAT_THREADS="1"))
 assert native.returncode == 0, "one-thread rc=%d %r" % (native.returncode, native.stdout + native.stderr)
 assert native.stdout == WANT["nested_blocking_spawn"], "one-thread stdout=%r" % native.stdout
+
+# With no `try` around the `recv` the program ends as it does for any error
+# nobody caught.
+path, _ = build(WORK + '''fn main() -> i64 {
+  let ch = chan(2)
+  spawn {
+    ch.send(work(0))
+  }
+  print(ch.recv())
+  return 0
+}
+''', "task_error_unhandled")
+seen = subprocess.run(_cxx.cli_args("run", "-O0", path), capture_output=True, text=True,
+                      timeout=120)
+assert seen.returncode == 1, "unhandled rc=%d %r" % (seen.returncode, seen.stdout + seen.stderr)
+assert seen.stdout == "", "unhandled stdout=%r" % seen.stdout
+assert "unhandled: Err('div by zero')" in seen.stderr, "unhandled stderr=%r" % seen.stderr
 
 # A program that sends and drains must leave nothing behind.
 path, csrc = build(CASES["pipeline"], "pipeline_asan")

@@ -1348,6 +1348,9 @@ static VChan *_vch_acquire(Val h) {
 #endif
 static bint _vch_total_slots = 0;
 
+/* Asked before a wait, defined with the tasks: nonzero when the wait is over. */
+static int vtask_lost(VChan *c);
+
 /* A closed slot goes back to the table once it holds nothing and has no active callers. */
 static void _vch_put(VChan *c) {
     _vch_tab_lock();
@@ -1418,7 +1421,10 @@ BFN Val vchan_send(Val h, Val v) {
     VChan *c = _vch_acquire(h);
     if (!c) return _verr_c("send on closed channel");
     _vch_lk(c);
-    while (c->len == c->cap && !c->closed) _vch_wait_snd(c);
+    while (c->len == c->cap && !c->closed) {
+        if (vtask_lost(c)) { _vch_ul(c); _vch_put(c); return vunwind; }
+        _vch_wait_snd(c);
+    }
     if (c->closed) { _vch_ul(c); _vch_put(c); return _verr_c("send on closed channel"); }
     Val stored = barena_depth ? vown(v) : vrc_inc(v);
     if (barena_depth && _verr_pending) { _vch_ul(c); _vch_put(c); return vunwind; }
@@ -1434,7 +1440,10 @@ BFN Val vchan_recv(Val h) {
     VChan *c = _vch_acquire(h);
     if (!c) return vnil();  /* closed and drained, or never a channel */
     _vch_lk(c);
-    while (c->len == 0 && !c->closed) _vch_wait_rcv(c);
+    while (c->len == 0 && !c->closed) {
+        if (vtask_lost(c)) { _vch_ul(c); _vch_put(c); return vunwind; }
+        _vch_wait_rcv(c);
+    }
     if (c->len == 0) {
         _vch_ul(c);
         _vch_put(c);
@@ -1642,6 +1651,34 @@ typedef struct VScope {
 } VScope;
 static BTLS VScope *_vscope_top;
 
+/* The channel the main thread last had to wait on. The task that ends last
+ * wakes it there; a stale entry wakes nobody. */
+static VChan *g_ch_main = 0;
+
+/* The main thread is about to wait on `c` for a task to send or receive. Once
+ * every task has ended that will not happen, and the error of a task that
+ * failed would stay unseen with it: a join re-raises it, and the wait comes
+ * before the join. Such a wait ends here with that error instead. Inside a
+ * join the main thread runs queued tasks itself and waits as a task does. */
+static int vtask_lost(VChan *c) {
+    if (!g_main_self || g_btask_self || _verr_pending) return 0;
+    Val e = vnil();
+    int lost = 0;
+    btask_lock();
+    g_ch_main = c;
+    if (g_q_nleft == 0) {
+        for (VScope *sc = _vscope_top; sc && !lost; sc = sc->up) {
+            if (sc->err) { lost = 1; sc->err = 0; e = sc->errv; sc->errv = vnil(); }
+        }
+        for (BTask *t = g_done; t && !lost; t = t->qnext) {
+            if (t->err) { lost = 1; t->err = 0; e = t->result; t->result = vnil(); }
+        }
+    }
+    btask_unlock();
+    if (lost) { vunwind = e; vunwind_do(); }
+    return lost;
+}
+
 static void vscope_attach(VScope *sc, BTask *t) {
     t->scope = sc;
     btask_lock();
@@ -1845,6 +1882,7 @@ static void btask_run(BTask *t) {
 
     btask_lock();
     g_q_nleft--;
+    VChan *wake = g_q_nleft == 0 ? g_ch_main : NULL;
     if (t->scope) {
         if (t->err) {
             if (!t->scope->err) { t->scope->err = 1; t->scope->errv = t->result; t->result = vnil(); }
@@ -1857,6 +1895,11 @@ static void btask_run(BTask *t) {
     }
     bpool_idle_wake();
     btask_unlock();
+    if (wake) {
+        _vch_lk(wake);
+        _vch_wake_all(wake);
+        _vch_ul(wake);
+    }
 }
 
 #if defined(_WIN32)

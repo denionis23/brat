@@ -156,6 +156,9 @@ All ownership checking is intra-procedural over local places (`x`, `x.f`,
   spawned task cannot be read or written by the parent or sibling tasks.
 - `chan(cap)` creates a bounded MPMC queue (`cap >= 1`); `send` copies/moves
   values across threads under a mutex + condition variables.
+- A `send` or `recv` of `main` that has to wait once every task has ended
+  re-raises the error of a task that failed, as the join after it would have.
+  With no failed task it keeps waiting.
 - `par for x in xs reduce(op, unit) { ... }` requires both `op` (2 parameters)
   and the loop body to have an empty effect row (`raise`, `io`, `alloc`,
   `spawn`, `ffi` all absent) and zero writes to outer state, folding element

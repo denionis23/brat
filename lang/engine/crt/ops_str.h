@@ -1978,7 +1978,11 @@ BFN void vbase_set(const char *b) {
     _vslash_norm(vbase_g);
     vbase_ready = 1;
 }
+/* Nonzero on the thread that runs `main`. The caller of a library built from
+ * BRAT and a foreign thread inside a callback are other threads. */
+static BTLS int BRAT_UNUSED g_main_self;
 BFN void vargs_set(bint c, char **v) {
+    g_main_self = 1;
     vargc_g = c;
     vargv_g = v;
 
