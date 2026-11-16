@@ -37,8 +37,10 @@ and `crt.h` (`lang/engine/`).
 - Linear resources: `move ptr` / `move ptr[T]` (must be consumed on every exit
   path via `ptr_free` or `move` transfer) and sockets/SQLite/plugin handles
   tracked by the checker.
-- Gradual boundary: unannotated bindings and parameters have type `Dyn` (`any`),
-  checked at run time on typed boundaries.
+- Gradual boundary: unannotated bindings and parameters have type `Dyn` (`any`).
+  The checker accepts a `Dyn` value wherever a type is declared, and nothing
+  checks it again at run time: `fn add(a: i64, b: i64) -> i64` given the result
+  of an unannotated fn that returned a string runs `+` on that string.
 
 ### 2.2 Runtime `Val` layout (`crt/core.h`)
 

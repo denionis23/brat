@@ -102,7 +102,9 @@ fn main() -> i64 {
 ```
 
 Type annotations are optional. An annotated function is checked at its call
-sites and compiles to plain C types; an unannotated one takes any value.
+sites and compiles to plain C types; an unannotated one takes any value. The
+check is made at compile time only: what an unannotated function returns has no
+known type, so it passes an annotation whatever it holds.
 
 A function returns with `return`. The last expression is not returned for you,
 and a function that declares `-> T` and can reach its end without a `return` is
