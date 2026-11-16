@@ -7,6 +7,7 @@
 
 #include "emit.h"
 
+#include "builtins.h"
 #include "ir.h"
 
 // The typer's ABI helpers: a callback slot is refused with the same rule here.
@@ -3983,45 +3984,33 @@ void Emitter::emit_loop_drops(const StmtList &body, const std::string &ind) {
 // alias, never releases it, and the value leaks. So the body is asked directly,
 // through the same `dec_able` question the holders ask, to a fixpoint because
 // one such function may call another.
-static bool body_returns_owned(const StmtList &body, const std::set<std::string> &heap,
-                               const std::string *self_a = nullptr,
-                               const std::string *self_b = nullptr);
-static bool block_returns_owned(const StmtList &body, const std::set<std::string> &heap, bool &saw,
-                                bool in_try = false,
-                                const std::string *self_a = nullptr,
-                                const std::string *self_b = nullptr);
-static bool stmt_returns_owned(const Stmt &s, const std::set<std::string> &heap, bool &saw,
-                               bool in_try = false,
-                               const std::string *self_a = nullptr,
-                               const std::string *self_b = nullptr);
+static bool body_returns_owned(const StmtList &body, const std::set<std::string> &heap);
 
-static bool expr_raises_err(const Expr *e) {
-    if (!e || e->k == EK::Closure) return false;
-    if (e->k == EK::Quest) return true;
-    if (e->k == EK::Call && e->a == "raise") return true;
-    for (const auto &k : e->kids)
-        if (expr_raises_err(k.get())) return true;
-    return false;
+// A number, a bool or None: there is nothing in it to release. `chr` answers
+// at most four bytes, which a string keeps inline. The methods are the ones
+// that answer a length, an index or nothing.
+static bool scalar_result(const Expr &e) {
+    switch (e.k) {
+    case EK::Num: case EK::Bool: case EK::None: case EK::Un:
+        return true;
+    case EK::Call:
+        return e.a == "chr" || (e.a != "own" && is_scalar_only_builtin(e.a));
+    case EK::MCall:
+        return e.b == "push" || e.b == "ins" || e.b == "swap" || e.b == "pos" || e.b == "close";
+    default:
+        return false;
+    }
 }
 
-// Every `return` this statement contains has to hand back an owned value. `saw`
-// records that the function returns at all; a branch or a loop with no `return`
-// in it is not a counter-example, which is why the bodies share one `saw`
-// instead of each answering for its own shape. An uncaught `raise(...)` or `?`
-// also leaves the frame with an owned `Err` tag via `verr_leave()`.
-static bool stmt_returns_owned(const Stmt &s, const std::set<std::string> &heap, bool &saw,
-                               bool in_try, const std::string *self_a, const std::string *self_b) {
-    if (!in_try && (expr_raises_err(s.e1.get()) || expr_raises_err(s.e2.get()) ||
-                    expr_raises_err(s.e3.get()))) {
-        saw = true;
-    }
+// Every `return` this statement contains has to hand back an owned value, or
+// one with nothing to release: `return -n` beside `return name + "!"` must not
+// make the fn one whose result nobody releases. A fn with no `return` at all
+// answers None. An uncaught `raise(...)` or `?` leaves the frame with an owned
+// `Err` tag via `verr_leave()`.
+static bool stmt_returns_owned(const Stmt &s, const std::set<std::string> &heap) {
     switch (s.k) {
     case SK::Return: {
-        if (!s.e1) return true;
-        if (s.e1->k == EK::Num || s.e1->k == EK::Bool || s.e1->k == EK::None) return true;
-        bool is_self = (s.e1->k == EK::Call &&
-                        ((self_a && s.e1->a == *self_a) || (self_b && s.e1->a == *self_b)));
-        if (!is_self) saw = true;
+        if (!s.e1 || scalar_result(*s.e1)) return true;
         if (s.e1->k == EK::Var) return true;
         // A bare uppercase local parses as a zero-argument call.
         if (s.e1->k == EK::Call && s.e1->kids.empty() &&
@@ -4029,32 +4018,23 @@ static bool stmt_returns_owned(const Stmt &s, const std::set<std::string> &heap,
         if (s.e1->k == EK::Move && !s.e1->kids.empty() && s.e1->kids[0]->k == EK::Var) return true;
         return dec_able(*s.e1, heap);
     }
-    case SK::Block: return block_returns_owned(view(s.body), heap, saw, in_try, self_a, self_b);
     case SK::If:
-        return block_returns_owned(view(s.body), heap, saw, in_try, self_a, self_b) &&
-               (!s.els || stmt_returns_owned(*s.els, heap, saw, in_try, self_a, self_b));
+        return body_returns_owned(view(s.body), heap) &&
+               (!s.els || stmt_returns_owned(*s.els, heap));
     case SK::Spawn: return true;
     case SK::Try:
-        return block_returns_owned(view(s.body), heap, saw, true, self_a, self_b) &&
-               block_returns_owned(view(s.body2), heap, saw, in_try, self_a, self_b);
-    case SK::While: case SK::ForRange: case SK::ForIter:
+        return body_returns_owned(view(s.body), heap) && body_returns_owned(view(s.body2), heap);
+    case SK::Block: case SK::While: case SK::ForRange: case SK::ForIter:
     case SK::Scope: case SK::Unsafe: case SK::Defer:
-        return block_returns_owned(view(s.body), heap, saw, in_try, self_a, self_b);
+        return body_returns_owned(view(s.body), heap);
     default: return true;
     }
 }
 
-static bool block_returns_owned(const StmtList &body, const std::set<std::string> &heap, bool &saw,
-                                bool in_try, const std::string *self_a, const std::string *self_b) {
+static bool body_returns_owned(const StmtList &body, const std::set<std::string> &heap) {
     for (const Stmt *s : body)
-        if (!stmt_returns_owned(*s, heap, saw, in_try, self_a, self_b)) return false;
+        if (!stmt_returns_owned(*s, heap)) return false;
     return true;
-}
-
-static bool body_returns_owned(const StmtList &body, const std::set<std::string> &heap,
-                               const std::string *self_a, const std::string *self_b) {
-    bool saw = false;
-    return block_returns_owned(body, heap, saw, false, self_a, self_b) && saw;
 }
 
 std::set<std::string> Emitter::heap_returns() {
@@ -4091,8 +4071,7 @@ std::set<std::string> Emitter::heap_returns() {
             std::string short_name = sep == std::string::npos ? name : name.substr(sep + 1);
             // A nested fn is registered as `name@seq` and called as `name`.
             short_name.resize(std::min(short_name.size(), short_name.find('@')));
-            // First check non-self base cases (`saw` requires at least one non-self owned return),
-            // then verify all returns assuming self is owned by induction on recursion depth.
+            // A call to itself is taken as owned, by induction on recursion depth.
             std::set<std::string> with_self = grown;
             with_self.insert(short_name);
             with_self.insert(name);
@@ -4106,7 +4085,7 @@ std::set<std::string> Emitter::heap_returns() {
                 with_self.insert(b);
                 with_self.insert(LOCAL_BINDING_PREFIX + b);
             }
-            if (!body_returns_owned(view(entry.decl->body), with_self, &name, &short_name)) continue;
+            if (!body_returns_owned(view(entry.decl->body), with_self)) continue;
             grown.insert(short_name);
             grown.insert(name);
         }

@@ -3,7 +3,8 @@ AddressSanitizer, because a leak is invisible on stdout.
 
 Each case is a shape that used to leak: a fresh value per loop pass, a
 container returned out of an arena, a defer that captures nothing, a vector
-built for one `par for`.
+built for one `par for`, a fn that answers a string on one path and a number
+or nothing on another.
 """
 import _cxx
 import _scratch
@@ -255,6 +256,41 @@ fn main() -> i64 {
   return 0
 }
 ''', "heap_element_long_enough_no_sso_99\nheap_element_after_init_long_99\n65\n45\n")
+
+
+CASES["mixed_returns"] = ('''
+fn label(n: i64) -> str {
+  return "row number {n} of the table"
+}
+
+fn note(n) {
+  let _ = n
+}
+
+fn width(n) {
+  if n > 109 {
+    return note(n)
+  }
+  if n > 99 {
+    return -n
+  }
+  if n > 49 {
+    return len(label(n))
+  }
+  return label(n)
+}
+
+fn main() -> i64 {
+  let mut total = 0
+  let mut i = 0
+  while i < 120 {
+    total = total + len(str(width(i)))
+    i = i + 1
+  }
+  print(total)
+  return 0
+}
+''', "1470\n")
 
 
 def emit(src, name):
