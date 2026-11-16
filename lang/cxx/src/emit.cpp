@@ -6536,6 +6536,18 @@ void Emitter::st(const Stmt &s, const std::string &ind) {
             emit_err_check(ind);
             err_scope_depth = saved_scope_depth;
         }
+        // `v.val` can still raise: `return v[i]` is one `vat_owned` with no
+        // statement of its own. In a `try` body that error belongs to the
+        // `catch`, so the value is computed and checked before the jump out.
+        if (err_goto) {
+            std::string t = new_tmp("rv");
+            ln(ind, cat("Val ", t, " = (", v.val, ");"));
+            size_t saved_scope_depth = err_scope_depth;
+            err_scope_depth = scopes.size();
+            emit_err_check(ind);
+            err_scope_depth = saved_scope_depth;
+            v.val = t;
+        }
         // The value leaves with the caller; the exit drops must not free it.
         // `a[i]` already hands back a reference the holder owns (vat_owned), so
         // the container can just be dropped at the exit like any other local;

@@ -6,7 +6,9 @@ Covers: Unicode simple and multi-char case mapping, replace with an empty patter
 with the wrong number of arguments, `i64()` / `f64()` between the two number
 types, `chr()` / `ord()` between a code point and its string, and a call of a
 raising fn as a statement of a `try` body, whose `Err` goes to the `catch`,
-raised or returned, from an `export fn` as from a plain one.
+raised or returned, from an `export fn` as from a plain one, and a `return` in
+a `try` body whose expression raises, which goes to the `catch` as well, also
+from inside a `scope`.
 """
 import _cxx
 import _scratch
@@ -41,6 +43,35 @@ export fn budget(n: i64) -> Result[i64, str] {
         return Err("under the budget")
     }
     return Ok(n)
+}
+
+fn pick(v, n) {
+    try {
+        return v[n]
+    } catch e {
+        return "pick: " + e
+    }
+}
+
+fn share(a: i64, b: i64) -> i64 {
+    try {
+        return a / b
+    } catch e {
+        return -1
+    }
+}
+
+fn joined(v, n) {
+    try {
+        scope {
+            spawn {
+                let busy = "task " + str(n)
+            }
+            return v[n]
+        }
+    } catch e {
+        return "joined: " + e
+    }
 }
 
 fn main() -> i64 {
@@ -134,6 +165,9 @@ fn main() -> i64 {
             print(e)
         }
     }
+    print(pick(["kept"], 0), pick(["kept"], 5))
+    print(share(6, 3), share(6, 0))
+    print(joined(["kept"], 0), joined(["kept"], 5), joined(["kept", "next"], 1))
     return 0;
 }
 '''
@@ -176,6 +210,9 @@ WANT = (
     "under the quota\n"
     "over the budget\n"
     "under the budget\n"
+    "kept pick: index out of range\n"
+    "2 -1\n"
+    "kept joined: index out of range next\n"
 ).encode("utf-8")
 
 
@@ -191,7 +228,7 @@ def main():
     assert b.returncode == 0, "build failed:\n" + (b.stdout + b.stderr)[-600:].decode("utf-8", "replace")
     rn = subprocess.run([exe], capture_output=True, timeout=60)
     assert rn.returncode == 0 and rn.stdout == WANT, "native rc=%d out=%r" % (rn.returncode, rn.stdout)
-    print("EDGES ALL GREEN (37 lines, -O0 and -O2)")
+    print("EDGES ALL GREEN (40 lines, -O0 and -O2)")
 
 
 if __name__ == "__main__":
