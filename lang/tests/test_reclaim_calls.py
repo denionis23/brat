@@ -4,7 +4,7 @@ AddressSanitizer, because a leak is invisible on stdout.
 Each case is a shape that used to leak: a fresh value per loop pass, a
 container returned out of an arena, a defer that captures nothing, a vector
 built for one `par for`, a fn that answers a string on one path and a number
-or nothing on another.
+or nothing on another, a binding a `spawn` block makes for itself.
 """
 import _cxx
 import _scratch
@@ -291,6 +291,36 @@ fn main() -> i64 {
   return 0
 }
 ''', "1470\n")
+
+CASES["spawn_local"] = ('''
+fn label(n: i64) -> str {
+  return "row number {n} of the table"
+}
+
+fn main() -> i64 {
+  let ch = chan(4)
+  let done = chan(1)
+  scope {
+    spawn {
+      let mut got = ch.recv()
+      let mut total = 0
+      while !is_none(got) {
+        total = total + len(got)
+        got = ch.recv()
+      }
+      done.send(total)
+    }
+    let mut i = 0
+    while i < 50 {
+      ch.send(label(i))
+      i = i + 1
+    }
+    ch.close()
+  }
+  print(done.recv())
+  return 0
+}
+''', "1290\n")
 
 
 def emit(src, name):

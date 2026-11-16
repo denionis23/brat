@@ -7025,10 +7025,21 @@ void Emitter::st(const Stmt &s, const std::string &ind) {
         std::set<std::string> capnames;
         Names mentioned;
         refs_in(view(s.body), mentioned);
+        // A name the block binds before it reads it is a local of the block.
+        // Captured, it was written without a release, so `got = ch.recv()`
+        // in a loop kept every message it replaced.
+        std::set<std::string> free_names;
+        closure_walk_stmts(view(s.body), {}, free_names);
+        Names own_names;
+        bound_in(view(s.body), own_names);
+        auto local_only = [&](const std::string &nm) {
+            return own_names.count(nm) && !free_names.count(nm);
+        };
         for (const auto &[nm, sy] : sym)
-            if (mentioned.count(nm)) capnames.insert(nm);
+            if (mentioned.count(nm) && !local_only(nm)) capnames.insert(nm);
         if (cap)
-            for (const auto &nm : cap->second) capnames.insert(nm);
+            for (const auto &nm : cap->second)
+                if (!local_only(nm)) capnames.insert(nm);
         clos.push_back({&no_params(), view(s.body), capnames, false, lookup_stmt_file(&s)});
         new_tmp("m");
         int n = tmp;
