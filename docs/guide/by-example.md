@@ -273,8 +273,9 @@ touched a: page:a -> page:c -> page:b
 `re_match`, `re_find`, `re_captures` and `re_replace` do not backtrack, so no
 pattern takes exponential time. A pattern matches characters: `.` takes a whole
 `é` and `[а-я]` is a range of letters. `\d`, `\w` and `\s` are ASCII only.
-`{4}` in a string literal is a placeholder, so a repeat count is written
-`\{4\}`:
+A pattern can have at most 200 nested groups; deeper nesting raises
+`bad regex pattern`. `{4}` in a string literal is a placeholder, so a repeat
+count is written `\{4\}`:
 
 ```brat run
 fn main() -> i64 {
