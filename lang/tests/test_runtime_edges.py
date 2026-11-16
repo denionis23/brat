@@ -6,7 +6,7 @@ Covers: Unicode simple and multi-char case mapping, replace with an empty patter
 with the wrong number of arguments, `i64()` / `f64()` between the two number
 types, `chr()` / `ord()` between a code point and its string, and a call of a
 raising fn as a statement of a `try` body, whose `Err` goes to the `catch`,
-raised or returned.
+raised or returned, from an `export fn` as from a plain one.
 """
 import _cxx
 import _scratch
@@ -29,6 +29,16 @@ fn quota(n: i64) -> Result[i64, str] {
     }
     if n < 0 {
         return Err("under the quota")
+    }
+    return Ok(n)
+}
+
+export fn budget(n: i64) -> Result[i64, str] {
+    if n > 9 {
+        raise("over the budget")
+    }
+    if n < 0 {
+        return Err("under the budget")
     }
     return Ok(n)
 }
@@ -116,6 +126,14 @@ fn main() -> i64 {
             print(e)
         }
     }
+    for n in [12, -1] {
+        try {
+            budget(n)
+            print("not reached")
+        } catch e {
+            print(e)
+        }
+    }
     return 0;
 }
 '''
@@ -156,6 +174,8 @@ WANT = (
     "closure: over the limit\n"
     "over the quota\n"
     "under the quota\n"
+    "over the budget\n"
+    "under the budget\n"
 ).encode("utf-8")
 
 
@@ -171,7 +191,7 @@ def main():
     assert b.returncode == 0, "build failed:\n" + (b.stdout + b.stderr)[-600:].decode("utf-8", "replace")
     rn = subprocess.run([exe], capture_output=True, timeout=60)
     assert rn.returncode == 0 and rn.stdout == WANT, "native rc=%d out=%r" % (rn.returncode, rn.stdout)
-    print("EDGES ALL GREEN (35 lines, -O0 and -O2)")
+    print("EDGES ALL GREEN (37 lines, -O0 and -O2)")
 
 
 if __name__ == "__main__":

@@ -1041,7 +1041,8 @@ void flatten(ModuleSet &set, bool prune_imports) {
     std::set<std::string> raisers;
     for (const auto &sp : set.flat) {
         const Stmt *s = inner(*sp);
-        if (s->k == SK::Fn && s->fns[0].name && body_raises(s->fns[0].body))
+        if ((s->k == SK::Fn || s->k == SK::ExportFn) && s->fns[0].name &&
+            body_raises(s->fns[0].body))
             raisers.insert(*s->fns[0].name);
     }
     std::vector<Stmt *> in_try;
