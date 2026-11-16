@@ -24,6 +24,7 @@
 #include <filesystem>
 #include <functional>
 #include <map>
+#include <memory>
 #include <optional>
 #include <set>
 #include <string>
@@ -575,6 +576,17 @@ struct V {
     std::string val;
 };
 
+// The names a call through which hands back an owned value: the fns of the
+// program, and the locals and captures of the fn being emitted. Both halves
+// are shared with the cache `heap_returns()` keeps, so a caller that holds
+// one across more emission keeps the names it was given.
+struct HeapNames {
+    std::shared_ptr<const std::set<std::string>> prog, local;
+    size_t count(const std::string &name) const {
+        return (prog && prog->count(name)) || (local && local->count(name)) ? 1 : 0;
+    }
+};
+
 // Methods whose result is a heap value the caller owns. `parse_int` and
 // `parse_float` answer with an `Ok`/`Err` tag, which is as much a heap value as a
 // string: left out, `print("8080".parse_int()?)` dropped the payload and kept the
@@ -959,7 +971,15 @@ struct Emitter {
     V ex_struct(const Expr &e);
     V args_vec(const ExprList &args);
     void emit_loop_drops(const StmtList &body, const std::string &ind);
-    std::set<std::string> heap_returns();
+    HeapNames heap_returns();
+    std::set<std::string> heap_returns_prog();
+    uint64_t heap_prog_stamp() const;
+    // `heap_returns()` is asked once or more per expression. Working the
+    // answer out each time made emission quadratic in the size of a program.
+    std::shared_ptr<const std::set<std::string>> heap_prog, heap_local;
+    uint64_t heap_prog_at = 0;
+    std::vector<std::string> heap_local_syms;
+    std::optional<std::set<std::string>> heap_local_cap;
     V call_result(std::vector<std::string> pre, const std::string &vec, const std::string &call);
     V direct_call_result(const ExprList &args,
                          const std::function<std::string(const std::vector<std::string> &)> &call);
@@ -2896,7 +2916,7 @@ static bool may_raise(const Expr &e, bool typed) {
     return false;
 }
 
-static bool dec_able(const Expr &e, const std::set<std::string> &heap) {
+static bool dec_able(const Expr &e, const HeapNames &heap) {
     switch (e.k) {
     case EK::Str: case EK::RStr: case EK::Num: case EK::Bool: case EK::None:
     case EK::Bin: case EK::VecLit: case EK::MapLit: case EK::StructLit: case EK::Closure:
@@ -3984,7 +4004,7 @@ void Emitter::emit_loop_drops(const StmtList &body, const std::string &ind) {
 // alias, never releases it, and the value leaks. So the body is asked directly,
 // through the same `dec_able` question the holders ask, to a fixpoint because
 // one such function may call another.
-static bool body_returns_owned(const StmtList &body, const std::set<std::string> &heap);
+static bool body_returns_owned(const StmtList &body, const HeapNames &heap);
 
 // A number, a bool or None: there is nothing in it to release. `chr` answers
 // at most four bytes, which a string keeps inline. The methods are the ones
@@ -4007,7 +4027,7 @@ static bool scalar_result(const Expr &e) {
 // make the fn one whose result nobody releases. A fn with no `return` at all
 // answers None. An uncaught `raise(...)` or `?` leaves the frame with an owned
 // `Err` tag via `verr_leave()`.
-static bool stmt_returns_owned(const Stmt &s, const std::set<std::string> &heap) {
+static bool stmt_returns_owned(const Stmt &s, const HeapNames &heap) {
     switch (s.k) {
     case SK::Return: {
         if (!s.e1 || scalar_result(*s.e1)) return true;
@@ -4031,13 +4051,14 @@ static bool stmt_returns_owned(const Stmt &s, const std::set<std::string> &heap)
     }
 }
 
-static bool body_returns_owned(const StmtList &body, const std::set<std::string> &heap) {
+static bool body_returns_owned(const StmtList &body, const HeapNames &heap) {
     for (const Stmt *s : body)
         if (!stmt_returns_owned(*s, heap)) return false;
     return true;
 }
 
-std::set<std::string> Emitter::heap_returns() {
+// The part of `heap_returns()` that is the same in every fn.
+std::set<std::string> Emitter::heap_returns_prog() {
     std::set<std::string> out_;
     auto add_fn_names = [](std::set<std::string> &dst, const std::string &name) {
         dst.insert(name);
@@ -4072,7 +4093,8 @@ std::set<std::string> Emitter::heap_returns() {
             // A nested fn is registered as `name@seq` and called as `name`.
             short_name.resize(std::min(short_name.size(), short_name.find('@')));
             // A call to itself is taken as owned, by induction on recursion depth.
-            std::set<std::string> with_self = grown;
+            auto names = std::make_shared<std::set<std::string>>(grown);
+            std::set<std::string> &with_self = *names;
             with_self.insert(short_name);
             with_self.insert(name);
             // `return g(x)` through a closure bound in this body, a parameter
@@ -4085,26 +4107,69 @@ std::set<std::string> Emitter::heap_returns() {
                 with_self.insert(b);
                 with_self.insert(LOCAL_BINDING_PREFIX + b);
             }
-            if (!body_returns_owned(view(entry.decl->body), with_self)) continue;
+            if (!body_returns_owned(view(entry.decl->body), HeapNames{names, nullptr})) continue;
             grown.insert(short_name);
             grown.insert(name);
         }
         if (grown.size() == out_.size()) break;
         out_ = grown;
     }
+    return out_;
+}
+
+// Changes whenever something `heap_returns_prog()` reads does: a fn or a
+// type is declared, or a pass puts another body in place of a fn's.
+uint64_t Emitter::heap_prog_stamp() const {
+    uint64_t h = 1469598103934665603ull;
+    auto mix = [&h](uint64_t v) { h = (h ^ v) * 1099511628211ull; };
+    for (const auto &[name, entry] : fns) {
+        mix(static_cast<uint64_t>(reinterpret_cast<uintptr_t>(entry.decl)));
+        mix(entry.ctor ? 1 : 0);
+    }
+    mix(fns.size());
+    mix(fn_ret.size());
+    mix(structs.size());
+    mix(native_structs.size());
+    mix(enums.size());
+    mix(global_lets.size());
+    return h;
+}
+
+HeapNames Emitter::heap_returns() {
+    const uint64_t stamp = heap_prog_stamp();
+    if (!heap_prog || stamp != heap_prog_at) {
+        heap_prog = std::make_shared<const std::set<std::string>>(heap_returns_prog());
+        heap_prog_at = stamp;
+    }
     // Local closure calls can return any Val. Uppercase bare bindings are
     // encoded as zero-argument calls too; mark them to keep those reads borrowed.
-    for (const auto &[name, _] : sym) {
-        out_.insert(name);
-        out_.insert(LOCAL_BINDING_PREFIX + name);
+    bool same = heap_local && heap_local_syms.size() == sym.size() &&
+                heap_local_cap.has_value() == cap.has_value() &&
+                (!cap || *heap_local_cap == cap->second);
+    if (same) {
+        size_t i = 0;
+        for (const auto &[name, _] : sym)
+            if (heap_local_syms[i++] != name) { same = false; break; }
     }
-    if (cap) {
-        for (const auto &name : cap->second) {
-            out_.insert(name);
-            out_.insert(LOCAL_BINDING_PREFIX + name);
+    if (!same) {
+        std::set<std::string> local;
+        heap_local_syms.clear();
+        for (const auto &[name, _] : sym) {
+            heap_local_syms.push_back(name);
+            local.insert(name);
+            local.insert(LOCAL_BINDING_PREFIX + name);
         }
+        heap_local_cap.reset();
+        if (cap) {
+            heap_local_cap = cap->second;
+            for (const auto &name : cap->second) {
+                local.insert(name);
+                local.insert(LOCAL_BINDING_PREFIX + name);
+            }
+        }
+        heap_local = std::make_shared<const std::set<std::string>>(std::move(local));
     }
-    return out_;
+    return HeapNames{heap_prog, heap_local};
 }
 
 /* A call that only reads its argument (`len`, `str`, `tagof`, `is_err`). */
@@ -4164,7 +4229,7 @@ V Emitter::borrow_builtin(const std::string &c_name, const ExprList &args) {
     std::vector<std::string> cargs;
     std::vector<std::string> drops;
     std::vector<std::string> lits;
-    std::set<std::string> heap = heap_returns();
+    const HeapNames heap = heap_returns();
     for (const auto &arg : args) {
         V av = ex(*arg);
         for (const auto &p : av.pre) pre.push_back(p);
@@ -7009,9 +7074,7 @@ void Emitter::st(const Stmt &s, const std::string &ind) {
 
 
 std::pair<std::set<std::string>, std::set<std::string>> reclaim_names(
-    const StmtList &body, const std::set<std::string> &params,
-    const std::set<std::string> &heap) {
-    (void)heap;
+    const StmtList &body, const std::set<std::string> &params) {
     std::map<std::string, int> let_cnt, for_iter_cnt, for_range_cnt;
     std::set<std::string> has_set, loop_let;
     std::function<void(const StmtList &, bool)> walk = [&](const StmtList &stmts, bool loop) {
@@ -7298,7 +7361,7 @@ void Emitter::define_fn(const std::string &cn, const std::vector<Param> &params,
     auto saved_relet = relet;
     // A captured binding has no owner here: releasing it would drop the map's.
     const std::set<std::string> param_names(names.begin(), names.end());
-    auto rr = reclaim_names(body, param_names, heap_returns());
+    auto rr = reclaim_names(body, param_names);
     reclaim = rr.first;
     relet = rr.second;
     Names local_bindings;
@@ -9551,7 +9614,7 @@ std::string Emitter::emit_program() {
         ln("", "");
     }
     run_pipeline();
-    auto rr = reclaim_names(top_exe, {}, heap_returns());
+    auto rr = reclaim_names(top_exe, {});
     reclaim = rr.first;
     relet = rr.second;
     // C-callable wrappers for BRAT functions used as callbacks.

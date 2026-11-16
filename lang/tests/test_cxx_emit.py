@@ -58,6 +58,23 @@ def emit(path, env=None, no_check=False):
     return r.stdout, r.stderr, r.returncode
 
 
+def long_fn_source(blocks):
+    out = ["fn id(x) { return x }",
+           "fn pair(a: i64, b: i64) -> i64 { return a * 31 + b }",
+           "fn main() -> i64 {",
+           "  let mut total = 0"]
+    for i in range(blocks):
+        out += ["  if true {",
+                "    let a = id(%d)" % i,
+                "    let b = pair(%d, %d)" % (i, i + 1),
+                "    let v = [a, b, id(a) + b]",
+                "    let s = \"n\" + str(v[2])",
+                "    total += len(s) + v[0] - a",
+                "  }"]
+    out += ["  print(total)", "  return 0", "}", ""]
+    return "\n".join(out)
+
+
 def main():
     _cxx.build()
     t0 = time.time()
@@ -120,6 +137,21 @@ def main():
             changed_without_drops += 1
     if accepted and changed_without_drops == 0:
         print("FAIL: BRAT_MOVE_RT=0 changed no corpus output")
+        bad += 1
+
+    # One long fn. For every expression the emitter worked out again which fns
+    # of the program return an owned value, so the time to emit grew with the
+    # square of the fn: 160 of these blocks took 8 s and 640 over two minutes.
+    long_path = os.path.join(TMP, "long_fn.brat")
+    with open(long_path, "w", encoding="utf-8") as f:
+        f.write(long_fn_source(640))
+    try:
+        r = subprocess.run([BIN, "cc", long_path], capture_output=True, text=True, timeout=60)
+        if r.returncode != 0 or not r.stdout:
+            print("FAIL long_fn.brat: rc=%d %s" % (r.returncode, r.stderr.strip()[:400]))
+            bad += 1
+    except subprocess.TimeoutExpired:
+        print("FAIL long_fn.brat: a fn of 640 blocks takes over 60 s to emit")
         bad += 1
 
     if bad:
