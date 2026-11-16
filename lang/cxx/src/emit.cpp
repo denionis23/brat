@@ -6750,6 +6750,8 @@ void Emitter::st(const Stmt &s, const std::string &ind) {
         }
         V c = ex(*s.e1);
         ln(ind, "while (1) {");
+        // The condition runs again after the body, which moved the line on.
+        if (trace_lines && s.line > 0) ln(ind + "  ", trace_stmt(s));
         for (auto &p : c.pre) ln(ind + "  ", p);
         emit_err_check(ind + "  ");
         std::vector<std::string> test;

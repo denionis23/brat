@@ -113,6 +113,8 @@ TRACE_FILES = {
     'after_typed.brat': 'fn two() -> i64 {\n  let n = 1\n  return n + 1\n}\nlet v = [1]\nprint(v[two()])\n',
     'after_rec.brat': 'fn down(n: i64) -> i64 {\n  if n == 0 {\n    return 0\n  }\n'
                       '  return down(n - 1) + 6 / (n - 3)\n}\nprint(down(2))\nprint(down(3))\n',
+    # A `while` condition that fails on a later round is still the `while` line.
+    'loop.brat': 'let v = [1]\nlet mut i = 0\nwhile i < v[i] {\n  i += 1\n}\n',
 }
 for rel, text in TRACE_FILES.items():
     with open(os.path.join(NEG, 'trace', *rel.split('/')), 'w', encoding='utf-8') as f:
@@ -130,7 +132,8 @@ for src, out, err in (
         ('again.brat', 'caught div by zero\n', "unhandled: Err('index out of range') at again.brat:9\n"),
         ('after.brat', '', "unhandled: Err('index out of range') at after.brat:5\n"),
         ('after_typed.brat', '', "unhandled: Err('index out of range') at after_typed.brat:6\n"),
-        ('after_rec.brat', '-9\n', "unhandled: Err('div by zero') at after_rec.brat:5\n")):
+        ('after_rec.brat', '-9\n', "unhandled: Err('div by zero') at after_rec.brat:5\n"),
+        ('loop.brat', '', "unhandled: Err('index out of range') at loop.brat:3\n")):
     for lvl in ((), ('-O1',)):
         p = run_trace('run', *lvl, src)
         check(p.returncode == 1 and p.stdout == out and p.stderr == err,
