@@ -1385,8 +1385,8 @@ static void maybe_append_crt_pch(const std::string &compiler,
     const std::string crt_digest = sha256_hex(crt_bundle);
 
     std::vector<std::string> pch_flags = extra_cc_flags;
+    if (static_mode) pch_flags.push_back("-static");
     if (is_gcc) {
-        if (static_mode) pch_flags.push_back("-static");
         if (shared_pic) {
             pch_flags.push_back("-shared");
             pch_flags.push_back("-fPIC");

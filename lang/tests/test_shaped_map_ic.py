@@ -164,6 +164,39 @@ def test_pch_cache_and_bundle_cli() -> None:
     check(os.path.isfile(os.path.join(ROOT, ".github", "workflows", "release.yml")), "missing release.yml")
 
 
+def test_clang_static_pch() -> None:
+    clang = shutil.which("clang")
+    if not sys.platform.startswith("linux") or not clang:
+        return
+    with open(clang, "rb") as f:
+        if f.read(2) == b"#!":
+            return
+    with tempfile.TemporaryDirectory(prefix="brat-clang-pch-") as td:
+        probe = subprocess.run([clang, "-static", "-x", "c", "-", "-o", os.path.join(td, "probe")],
+                               input="int main(void) { return 0; }\n", capture_output=True,
+                               text=True, timeout=60)
+        if probe.returncode != 0:
+            print("SKIP clang static PCH: static linking unavailable")
+            return
+        prog = os.path.join(ROOT, "examples", "hello.brat")
+        for order in (("--static", "--dynamic"), ("--dynamic", "--static")):
+            cache = os.path.join(td, order[0][2:])
+            env = dict(os.environ, BRAT_CC=clang, BRAT_CACHE=cache)
+            env.pop("BRAT_NO_PCH", None)
+            env.pop("BRAT_NATIVE_CACHE_DISABLE", None)
+            for i, mode in enumerate((order[0], order[0], order[1], order[1])):
+                exe = os.path.join(td, order[0][2:] + str(i))
+                r = subprocess.run([BIN, "build", mode, "-O2", prog, "-o", exe],
+                                   env=env, capture_output=True, text=True, timeout=90)
+                check(r.returncode == 0, f"clang {mode} build {i} failed: {r.stderr}")
+                run = subprocess.run([exe], capture_output=True, text=True, timeout=30)
+                check(run.returncode == 0 and run.stdout == "hello from brat\n",
+                      f"clang {mode} executable failed: {run.stdout} {run.stderr}")
+            pch_dir = os.path.join(cache, "pch")
+            pch_files = [p for p in os.listdir(pch_dir) if p.endswith(".h.pch")]
+            check(len(pch_files) == 2, f"static and dynamic builds need separate PCH files: {pch_files}")
+
+
 def test_real_system_headers_ffi() -> None:
     if sys.platform != "linux":
         return
@@ -360,6 +393,7 @@ def test_adversarial_fuzzing_parsers() -> None:
 if __name__ == "__main__":
     test_shaped_maps_ic_and_o0_o1_parity()
     test_pch_cache_and_bundle_cli()
+    test_clang_static_pch()
     test_real_system_headers_ffi()
     test_adversarial_fuzzing_parsers()
     print("SHAPED MAP IC, FFI, FUZZ & SPEED ALL GREEN")
