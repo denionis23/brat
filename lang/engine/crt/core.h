@@ -346,6 +346,14 @@ typedef struct BLoc { const char *file; bint line; } BLoc;
 static BTLS const BLoc *_btrace_cur = NULL;
 static BTLS const BLoc *_verr_at = NULL;
 BFN_HOT void btrace_at(const BLoc *at) { _btrace_cur = at; }
+/* A fn that hands back a value puts the statement of its caller back, so an
+   error raised later in that statement is reported there and not at the last
+   line the callee ran. A returned `Err` keeps the line it was returned from:
+   that is where it started on its way out. */
+BFN_HOT void btrace_ret(const BLoc *at, Val r) {
+    if (r.tag == V_TAG && r.as.tv && !strcmp(r.as.tv->tag, "err")) return;
+    _btrace_cur = at;
+}
 BFN int vtrace_enabled(void) {
     const char *ev = getenv("BRAT_TRACE");
 #ifdef BRAT_TRACE_DEFAULT

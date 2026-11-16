@@ -703,6 +703,10 @@ struct Emitter {
     std::set<std::string> fboolvars;
     std::set<std::string> fintvars;
     std::string fself_rec;
+    // The trace store of the statement `fst` is emitting. A self-recursive fn
+    // repeats it after each call to itself in place of saving and restoring
+    // the caller's statement at every level.
+    std::string ftrace_cur;
     int ic_n = 0, fic_n = 0, mic_slot = -1;
     std::map<std::pair<std::string, std::vector<std::string>>, int> shapes;
     std::vector<std::pair<std::string, std::vector<std::string>>> shape_defs;
@@ -2121,6 +2125,7 @@ std::string Emitter::fchk(const Expr &e, const std::string &ind) {
         ln(ind, cat(ect, " ", t, " = ", fast_call_c(e, std::move(args)), ";"));
         if (!fastc.count(e.a) || fails.count(e.a))
             ln(ind, cat("if (bverr_unlikely()) ", fret_bail()));
+        if (!fself_rec.empty() && e.a == fself_rec && !ftrace_cur.empty()) ln(ind, ftrace_cur);
         return t;
     }
     case EK::Bin: {
@@ -2190,7 +2195,10 @@ void Emitter::fprint(const ExprList &args, const std::string &ind) {
 
 void Emitter::fst(const Stmt &s, const std::string &ind) {
     emit_dbg_stmt(s);
-    if (trace_lines && s.line > 0) ln(ind, trace_stmt(s));
+    if (trace_lines && s.line > 0) {
+        ftrace_cur = trace_stmt(s);
+        ln(ind, ftrace_cur);
+    }
     switch (s.k) {
     case SK::Let:
     case SK::LetTmp:
@@ -2202,8 +2210,12 @@ void Emitter::fst(const Stmt &s, const std::string &ind) {
     case SK::Return: {
         std::string rv = fchk(*s.e1, ind);
         if (frec && fself_rec.empty()) ln(ind, "bdepth_pop();");
-        if (fkind == "f64" && fint(*s.e1))
-            ln(ind, cat("return (double)(", rv, ");"));
+        if (fkind == "f64" && fint(*s.e1)) rv = cat("(double)(", rv, ")");
+        // The value is computed before the caller's statement is put back: a
+        // division in it still belongs to this line.
+        if (trace_lines && fself_rec.empty())
+            ln(ind, cat("{ ", fkind == "f64" ? "double" : "int64_t", " __rv = ", rv,
+                        "; btrace_at(__tr); return __rv; }"));
         else
             ln(ind, cat("return ", rv, ";"));
         break;
@@ -2368,6 +2380,7 @@ void Emitter::emit_fast_fn(const std::string &name) {
     }
     frec = rec_fast.count(name) > 0;
     fself_rec.clear();
+    ftrace_cur.clear();
     if (frec) {
         std::set<std::string> calls;
         for (const Stmt *s : view(decl.body)) collect_calls(*s, calls);
@@ -2441,6 +2454,7 @@ void Emitter::emit_fast_fn(const std::string &name) {
                          fkind == "f64" ? "0.0" : "0", "; }"));
         }
     }
+    if (trace_lines && fself_rec.empty()) ln("  ", "const BLoc *__tr = _btrace_cur;");
     std::set<std::string> vars(names.begin(), names.end());
     collect_vars(view(decl.body), vars);
     for (const auto &n : vars) {
@@ -2451,12 +2465,20 @@ void Emitter::emit_fast_fn(const std::string &name) {
     }
     for (size_t bi = body_start; bi < decl.body.size(); bi++) fst(*decl.body[bi], "  ");
     if (frec && fself_rec.empty()) ln("  ", "bdepth_pop();");
+    if (trace_lines && fself_rec.empty()) ln("  ", "btrace_at(__tr);");
     ln("  ", cat("return ", fkind == "f64" ? "0.0" : "0", ";"));
     ln("", "}");
     if (!fself_rec.empty()) {
         std::string rcall = call_args.empty() ? "bdepth_rem()" : cat(call_args, ", bdepth_rem()");
         ln("", cat("static ", ct, " ", fastc[name], "(", args.empty() ? "void" : args, ") {"));
-        ln("  ", cat("return ", fastc[name], "_r(", rcall, ");"));
+        if (trace_lines) {
+            ln("  ", "const BLoc *__tr = _btrace_cur;");
+            ln("  ", cat(ct, " __rv = ", fastc[name], "_r(", rcall, ");"));
+            ln("  ", "btrace_at(__tr);");
+            ln("  ", "return __rv;");
+        } else {
+            ln("  ", cat("return ", fastc[name], "_r(", rcall, ");"));
+        }
         ln("", "}");
     }
     ln("", "");
@@ -7256,6 +7278,7 @@ void Emitter::define_fn(const std::string &cn, const std::vector<Param> &params,
     }
     ln("  ", "if (bdepth_push()) { vraise(\"recursion too deep\"); return vunwind; }");
     ln("  ", "Val __ret = vnil();");
+    if (trace_lines) ln("  ", "const BLoc *__tr = _btrace_cur;");
     ln("  ", cat("volatile int64_t ", dfbname, " = vdfsp;"));
     ln("  ", "vdfpush();");
     std::set<std::string> vars(names.begin(), names.end());
@@ -7405,6 +7428,7 @@ void Emitter::define_fn(const std::string &cn, const std::vector<Param> &params,
     }
     ln("  ", "bdepth_pop();");
     ln("  ", cat("vdfreset(", dfbname, ");"));
+    if (trace_lines) ln("  ", "btrace_ret(__tr, __ret);");
     ln("  ", "return __ret;");
     ln("", "}");
     ln("", "");
