@@ -4,6 +4,7 @@ import _scratch
 
 import hashlib
 import os
+import shutil
 import subprocess
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -117,9 +118,8 @@ for name, (src, want, rc) in RUN_CASES.items():
 assert ": 0 error(s)" not in run_native(write(os.path.join(TMP, "quiet.brat"),
                                              RUN_CASES["prints"][0])).stdout
 
-# The cache is keyed by the emitted C: editing the source changes the answer,
-# and a second run of the same source does not recompile (no compiler
-# invocation).
+# The cache key follows the emitted C: editing the source changes the answer,
+# while another run of the same source keeps the same entry.
 cached = write(os.path.join(TMP, "cached.brat"),
                'fn main() -> i64 {\n  print("one")\n  return 0\n}\n')
 first = run_native(cached)
@@ -139,34 +139,74 @@ def run_entries():
 # its own entry, because a runtime error names the file it happened in.
 assert len(run_entries()) == len(RUN_CASES) + 3, run_entries()
 
-# The file is part of the key and the directory `brat` is started in is not:
-# the same file run from two places is one entry, and each place sees the
-# shortest name that reaches the file from there.
+# A custom compiler or search path can depend on the working directory, so
+# that context gets a separate key for each directory. The default compiler
+# shares the entry and still reports a path relative to the current directory.
+context_vars = (
+    "BRAT_CC", "CC", "CPATH", "C_INCLUDE_PATH", "CPLUS_INCLUDE_PATH",
+    "OBJC_INCLUDE_PATH", "COMPILER_PATH", "GCC_EXEC_PREFIX", "LIBRARY_PATH",
+    "SDKROOT", "MACOSX_DEPLOYMENT_TARGET",
+)
+cwd_sensitive = any(name in env for name in context_vars) or env.get("BRAT_NATIVE_CACHE_DISABLE") == "1"
+if not cwd_sensitive:
+    for name in ("cc", "gcc", "clang"):
+        compiler = shutil.which(name)
+        if compiler:
+            try:
+                with open(compiler, "rb") as f:
+                    prefix = f.read(2)
+                    cwd_sensitive = len(prefix) != 2 or prefix == b"#!"
+            except OSError:
+                cwd_sensitive = True
+            break
+
 FAILS = 'fn main() -> i64 {\n  let v = [1]\n  print(v[3])\n  return 0\n}\n'
 os.makedirs(os.path.join(TMP, "proj", "src"))
 os.makedirs(os.path.join(TMP, "elsewhere"))
 one = write(os.path.join(TMP, "proj", "src", "one.brat"), FAILS)
 before = run_entries()
-for cwd, shown in ((os.path.join(TMP, "proj", "src"), "one.brat"),
-                   (os.path.join(TMP, "proj"), "src/one.brat"),
-                   (TMP, "proj/src/one.brat")):
+cwd_cases = ((os.path.join(TMP, "proj", "src"), "one.brat"),
+             (os.path.join(TMP, "proj"), "src/one.brat"),
+             (TMP, "proj/src/one.brat"))
+for i, (cwd, shown) in enumerate(cwd_cases, 1):
     got = subprocess.run([BIN, "run", one], capture_output=True, text=True, timeout=300,
                          env=env, cwd=cwd)
     assert got.returncode == 1 and got.stderr == \
         "unhandled: Err('index out of range') at %s:3\n" % shown, (cwd, got.stderr)
-    assert len(run_entries()) == len(before) + 1, (cwd, run_entries())
+    expected = len(before) + (i if cwd_sensitive else 1)
+    assert len(run_entries()) == expected, (cwd, run_entries())
+elsewhere = os.path.join(TMP, "elsewhere")
 got = subprocess.run([BIN, "run", one], capture_output=True, text=True, timeout=300,
-                     env=env, cwd=os.path.join(TMP, "elsewhere"))
+                     env=env, cwd=elsewhere)
 full = got.stderr.strip().split(" at ")[-1]
-assert full.endswith(":3") and os.path.isabs(full[:-2]) and os.path.samefile(full[:-2], one), got.stderr
-assert len(run_entries()) == len(before) + 1, run_entries()
+assert got.returncode == 1 and full.endswith(":3") and os.path.isabs(full[:-2]) and os.path.samefile(full[:-2], one), got.stderr
+expected = len(before) + (len(cwd_cases) + 1 if cwd_sensitive else 1)
+assert len(run_entries()) == expected, run_entries()
+entries = run_entries()
+again = subprocess.run([BIN, "run", one], capture_output=True, text=True, timeout=300,
+                       env=env, cwd=elsewhere)
+assert again.returncode == 1 and again.stderr == got.stderr and run_entries() == entries
 
 # The same text under another name is another program as far as its errors go.
 two = write(os.path.join(TMP, "proj", "src", "two.brat"), FAILS)
 got = subprocess.run([BIN, "run", two], capture_output=True, text=True, timeout=300,
                      env=env, cwd=os.path.join(TMP, "proj", "src"))
-assert got.stderr == "unhandled: Err('index out of range') at two.brat:3\n", got.stderr
-assert len(run_entries()) == len(before) + 2, run_entries()
+assert got.returncode == 1 and got.stderr == "unhandled: Err('index out of range') at two.brat:3\n", got.stderr
+assert len(run_entries()) == len(entries) + 1, run_entries()
+
+# Exercise the custom-compiler key even when the suite was started without one.
+compiler = env.get("BRAT_CC") or env.get("CC") or shutil.which("cc") or shutil.which("gcc") or shutil.which("clang")
+assert compiler, "no C compiler found"
+custom_env = dict(env, BRAT_CC=compiler)
+custom = write(os.path.join(TMP, "proj", "src", "custom.brat"), FAILS)
+before_custom = set(run_entries())
+for i, (cwd, shown) in enumerate(((os.path.join(TMP, "proj", "src"), "custom.brat"),
+                                  (os.path.join(TMP, "proj"), "src/custom.brat")), 1):
+    got = subprocess.run([BIN, "run", custom], capture_output=True, text=True, timeout=300,
+                         env=custom_env, cwd=cwd)
+    assert got.returncode == 1 and got.stderr == \
+        "unhandled: Err('index out of range') at %s:3\n" % shown, (cwd, got.stderr)
+    assert len(set(run_entries()) - before_custom) == i, (cwd, run_entries())
 
 # A program the checker refuses is refused before anything is compiled.
 bad_run = write(os.path.join(TMP, "run-bad.brat"),
