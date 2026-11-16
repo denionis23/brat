@@ -8,7 +8,8 @@ types, `chr()` / `ord()` between a code point and its string, and a call of a
 raising fn as a statement of a `try` body, whose `Err` goes to the `catch`,
 raised or returned, from an `export fn` as from a plain one, and a `return` in
 a `try` body whose expression raises, which goes to the `catch` as well, also
-from inside a `scope`.
+from inside a `scope`, and the indices `ins` and `del` take: a negative one
+counts from the end, `ins` clips and `del` raises.
 """
 import _cxx
 import _scratch
@@ -168,6 +169,16 @@ fn main() -> i64 {
     print(pick(["kept"], 0), pick(["kept"], 5))
     print(share(6, 3), share(6, 0))
     print(joined(["kept"], 0), joined(["kept"], 5), joined(["kept", "next"], 1))
+    let mut slots = [1, 2, 3]
+    print(slots.ins(-1, 8), slots.ins(-9, 7), slots.ins(9, 6), slots)
+    print(slots.del(-1), slots.del(-5), slots)
+    for at in [4, -5] {
+        try {
+            print(slots.del(at))
+        } catch e {
+            print(e)
+        }
+    }
     return 0;
 }
 '''
@@ -213,6 +224,10 @@ WANT = (
     "kept pick: index out of range\n"
     "2 -1\n"
     "kept joined: index out of range next\n"
+    "4 5 6 [7, 1, 2, 8, 3, 6]\n"
+    "6 7 [1, 2, 8, 3]\n"
+    "index out of range\n"
+    "index out of range\n"
 ).encode("utf-8")
 
 

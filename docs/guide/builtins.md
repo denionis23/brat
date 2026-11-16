@@ -71,8 +71,8 @@ strings as well.
 |---|---|
 | `v.push(x)` | appends `x`; the new length |
 | `v.pop()` | removes the last item and answers it, `None` when there is none |
-| `v.ins(i, x)` | inserts `x` before index `i`; the new length |
-| `v.del(i)` | removes the item at `i` and answers it |
+| `v.ins(i, x)` | inserts `x` before index `i`; the new length. A negative `i` counts from the end and one outside the vector is clipped |
+| `v.del(i)` | removes the item at `i` and answers it. A negative `i` counts from the end and one outside the vector raises `index out of range` |
 | `v.swap(i, j)` | exchanges the items at `i` and `j` in place; an index outside `0..len(v)` raises `index out of range` |
 | `v.first()`, `v.last()` | the item, or `None` when the vector is empty |
 | `v.slice(a, b)` | a new vector, indices as for `s.slice` |
