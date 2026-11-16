@@ -6,7 +6,7 @@ import sys
 import _cxx
 import _scratch
 
-NATIVE = _cxx.build()
+NATIVE = os.environ.get("BRAT_CXX") or _cxx.build()
 CXX = NATIVE
 TMP = _scratch.mkdtemp(prefix="brat-struct-sra-")
 ENV = dict(os.environ, BRAT_FILES="1")

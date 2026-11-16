@@ -28,7 +28,7 @@ import _scratch
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.abspath(os.path.join(HERE, "..", ".."))
-CXX = _cxx.build()
+CXX = os.environ.get("BRAT_CXX") or _cxx.build()
 ENGINE = os.path.join(ROOT, "lang", "engine")
 TMP = _scratch.mkdtemp(prefix="brat-defer-try-")
 

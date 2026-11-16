@@ -6,7 +6,7 @@ import _scratch
 import os
 import subprocess
 
-BIN = _cxx.build()
+BIN = os.environ.get("BRAT_CXX") or _cxx.build()
 TMP = _scratch.mkdtemp(prefix="brat-bitwise-")
 
 

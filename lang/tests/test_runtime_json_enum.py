@@ -11,7 +11,7 @@ import sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 ENGINE = os.path.abspath(os.path.join(HERE, "..", "engine"))
-BIN = _cxx.build()
+BIN = os.environ.get("BRAT_CXX") or _cxx.build()
 CC = os.environ.get("BRAT_CC") or shutil.which("cc") or shutil.which("gcc") or shutil.which("clang")
 assert CC, "no C compiler found"
 TMP = _scratch.mkdtemp(prefix="brat-rt-json-enum-")

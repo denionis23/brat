@@ -7,7 +7,7 @@ import sys
 import _cxx
 import _scratch
 
-NATIVE = _cxx.build()
+NATIVE = os.environ.get("BRAT_CXX") or _cxx.build()
 TMP = _scratch.mkdtemp(prefix="brat-typed-enums-")
 ENV = dict(os.environ, BRAT_FILES="1")
 

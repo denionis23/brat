@@ -11,8 +11,11 @@ import threading
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.abspath(os.path.join(HERE, "..", ".."))
 ENGINE = os.path.join(ROOT, "lang", "engine")
-BIN = _cxx.build()
+BIN = os.environ.get("BRAT_CXX") or _cxx.build()
 TMP = _scratch.mkdtemp(prefix="brat-eco-")
+
+# The all-stdlib program takes longer with an instrumented compiler.
+COMPILER_TIMEOUT = 600
 
 asserts = 0
 
@@ -148,7 +151,7 @@ fn main() -> i64 {{
 }}
 """)
 
-    emit_cx = subprocess.check_output([BIN, "emit-c", std_src], text=True, timeout=60)
+    emit_cx = subprocess.check_output([BIN, "emit-c", std_src], text=True, timeout=COMPILER_TIMEOUT)
 
     c_path = os.path.join(TMP, "std_regex.c")
     exe_path = os.path.join(TMP, "std_regex.asan")
@@ -161,8 +164,8 @@ fn main() -> i64 {{
     )
     check(comp.returncode == 0, "ASan compile failed: " + comp.stderr)
 
-    ri = subprocess.run(_cxx.cli_args("run", "-O0", std_src),
-                        capture_output=True, text=True, cwd=TMP, timeout=60)
+    ri = subprocess.run([BIN, "run", "-O0", std_src],
+                        capture_output=True, text=True, cwd=TMP, timeout=COMPILER_TIMEOUT)
     rn = subprocess.run([exe_path], capture_output=True, text=True, cwd=TMP, timeout=60,
                         env={**os.environ, "ASAN_OPTIONS": "detect_leaks=1:abort_on_error=1"})
     check(ri.returncode == 0 and ri.stdout == "W2_STD_REGEX_OK\n",
@@ -195,7 +198,7 @@ with open(bri_p, "w", encoding="utf-8") as f:
 with open(manifest_p, "w", encoding="utf-8") as f:
     json.dump({"name": "hashx", "version": "0.2.0", "c_sources": ["hashx.c"]}, f)
 
-eb = subprocess.run(_cxx.cli_args("ffi", brat_p, "--header", hdr_p, "--emit-bind", bind_p),
+eb = subprocess.run([BIN, "ffi", brat_p, "--header", hdr_p, "--emit-bind", bind_p],
                     capture_output=True, text=True, timeout=30)
 check(eb.returncode == 0 and os.path.isfile(bind_p), "emit-bind failed: " + eb.stderr)
 
@@ -207,7 +210,7 @@ with tarfile.open(tgz_p, "w:gz") as tf:
 
 proj = os.path.join(TMP, "csrc_consumer")
 os.makedirs(proj, exist_ok=True)
-r_add = subprocess.run(_cxx.cli_args("pkg", "add", "file://" + tgz_p),
+r_add = subprocess.run([BIN, "pkg", "add", "file://" + tgz_p],
                        capture_output=True, text=True, cwd=proj, timeout=60)
 check(r_add.returncode == 0, "pkg add c_sources failed: " + r_add.stdout + r_add.stderr)
 
@@ -263,7 +266,7 @@ fn main() -> i64 {
 with open(lsp_file, "w", encoding="utf-8") as f:
     f.write(lsp_src)
 
-lsp = subprocess.Popen(_cxx.cli_args("lsp"), stdin=subprocess.PIPE,
+lsp = subprocess.Popen([BIN, "lsp"], stdin=subprocess.PIPE,
                        stdout=subprocess.PIPE, stderr=subprocess.PIPE)
 
 
@@ -357,7 +360,7 @@ finally:
     lsp.wait()
 
 # MCP new tools: brat_abi_matrix & brat_pkg_verify
-mcp = subprocess.Popen(_cxx.cli_args("mcp"), stdin=subprocess.PIPE,
+mcp = subprocess.Popen([BIN, "mcp"], stdin=subprocess.PIPE,
                        stdout=subprocess.PIPE, stderr=subprocess.PIPE)
 try:
     for req in (

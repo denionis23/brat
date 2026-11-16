@@ -123,6 +123,30 @@ class RunnerTests(unittest.TestCase):
         self.assertIn("2 files, 1 failed", stream.getvalue())
 
 
+class CompilerSelectionTests(unittest.TestCase):
+    @unittest.skipIf(os.name == "nt", "POSIX executable script")
+    def test_selected_compiler_is_used(self):
+        suites = (
+            "test_bitwise.py", "test_defer_try_soundness.py", "test_runtime_json_enum.py",
+            "test_stdlib_pkg_regex.py", "test_structs.py", "test_typed_enums.py",
+            "test_struct_sra.py",
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            compiler = Path(tmp) / "brat-cxx-asan"
+            compiler.write_text('#!/bin/sh\nprintf "%s\\n" "$1" > "$BRAT_SELECTED_MARKER"\nexit 97\n')
+            compiler.chmod(0o700)
+            for suite in suites:
+                with self.subTest(suite=suite):
+                    marker = Path(tmp) / (suite + ".called")
+                    env = dict(os.environ, BRAT_CXX=str(compiler), BRAT_CC=sys.executable,
+                               BRAT_SELECTED_MARKER=str(marker),
+                               BRAT_SCRATCH=str(Path(tmp) / (suite + ".scratch")))
+                    _, _, rc, output = runner.one(str(HERE / suite), env, timeout=15)
+                    self.assertNotEqual(rc, 0, suite)
+                    self.assertNotEqual(rc, 124, "%s timed out: %s" % (suite, output[-400:]))
+                    self.assertTrue(marker.is_file(), "%s ignored BRAT_CXX: %s" % (suite, output[-400:]))
+
+
 class CacheTests(unittest.TestCase):
     def test_pruning_preserves_unrelated_files_and_symlinks(self):
         with tempfile.TemporaryDirectory() as tmp:

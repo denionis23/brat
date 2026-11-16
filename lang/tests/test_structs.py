@@ -6,7 +6,7 @@ import subprocess
 import _cxx
 import _scratch
 
-BIN = _cxx.build()
+BIN = os.environ.get("BRAT_CXX") or _cxx.build()
 TMP = _scratch.mkdtemp(prefix="brat-structs-")
 
 
