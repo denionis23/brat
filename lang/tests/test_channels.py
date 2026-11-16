@@ -426,6 +426,88 @@ native = subprocess.run([exe], capture_output=True, text=True, timeout=10,
 assert native.returncode == 0, "one-thread rc=%d %r" % (native.returncode, native.stdout + native.stderr)
 assert native.stdout == WANT["nested_blocking_spawn"], "one-thread stdout=%r" % native.stdout
 
+# A task that waits on a channel waits for another task, so it must not keep
+# that task out of the pool: with as many receivers as worker threads the
+# sender stayed in the queue and the program hung. The first program waits in
+# `main` as well, the second leaves the queue to the pool alone.
+POOL = {}
+POOL["pool_main_waits"] = ('''fn main() -> i64 {
+  let jobs = chan(4)
+  let done = chan(4)
+  scope {
+    for w in 0..4 {
+      spawn {
+        let mut total = 0
+        let mut got = jobs.recv()
+        while !is_none(got) {
+          total += got
+          got = jobs.recv()
+        }
+        done.send(total)
+      }
+    }
+    spawn {
+      for i in 0..200 {
+        jobs.send(i)
+      }
+      jobs.close()
+    }
+    let mut sum = 0
+    for w in 0..4 {
+      sum += done.recv()
+    }
+    print(sum)
+  }
+  return 0
+}
+''', "19900\n")
+POOL["pool_all_wait"] = ('''fn main() -> i64 {
+  let jobs = chan(2)
+  let done = chan(8)
+  scope {
+    for w in 0..8 {
+      spawn {
+        let mut total = 0
+        let mut got = jobs.recv()
+        while !is_none(got) {
+          total += got
+          got = jobs.recv()
+        }
+        done.send(total)
+      }
+    }
+    spawn {
+      spawn {
+        for i in 0..100 {
+          jobs.send(i)
+        }
+        jobs.close()
+      }
+    }
+  }
+  let mut sum = 0
+  for w in 0..8 {
+    sum += done.recv()
+  }
+  print(sum)
+  return 0
+}
+''', "4950\n")
+for name, (src, want) in POOL.items():
+    path, _ = build(src, name)
+    exe = os.path.join(TMP, name + ".exe")
+    built = subprocess.run(_cxx.cli_args("build", path, "-o", exe),
+                           capture_output=True, text=True, timeout=300)
+    assert built.returncode == 0, "%s build: %r" % (name, (built.stdout + built.stderr)[-800:])
+    for threads in ("1", "2", "4", "7"):
+        try:
+            seen = subprocess.run([exe], capture_output=True, text=True, timeout=30,
+                                  env=dict(os.environ, BRAT_THREADS=threads))
+        except subprocess.TimeoutExpired:
+            raise AssertionError("%s hangs with BRAT_THREADS=%s" % (name, threads))
+        assert seen.returncode == 0 and seen.stdout == want, "%s BRAT_THREADS=%s rc=%d %r" % (
+            name, threads, seen.returncode, seen.stdout + seen.stderr)
+
 # With no `try` around the `recv` the program ends as it does for any error
 # nobody caught.
 path, _ = build(WORK + '''fn main() -> i64 {

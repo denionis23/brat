@@ -265,6 +265,7 @@ def constant(path, pattern):
 
 
 pool = constant("engine/crt/conc.h", r"#define BPOOL_MAX (\d+)")
+pool_cap = constant("engine/crt/conc.h", r"#define BPOOL_CAP (\d+)")
 chan_cap = int(constant("engine/crt/conc.h", r"#define BRAT_MAX_CHAN_CAP (\d+)"))
 nest = constant("cxx/src/parser.cpp", r"kMaxNest = (\d+)")
 height = constant("cxx/src/parser.cpp", r"kMaxTreeDepth = (\d+)")
@@ -277,6 +278,8 @@ check("at most %s nested groups" % regex_depth in examples,
 check("at most %s OS threads" % pool in ledger, "LEDGER.md does not give the pool size %s" % pool)
 check("`cap <= %s`" % format(chan_cap, ",") in ledger, "LEDGER.md does not give the channel limit %d" % chan_cap)
 check(re.search(r"BRAT_THREADS.*at most %s\." % pool, cli_doc), "cli.md does not give the pool size %s" % pool)
+check(re.search(r"BRAT_THREADS.*up to %s\." % pool_cap, cli_doc), "cli.md does not give the pool ceiling %s" % pool_cap)
+check("up to %s while its workers wait" % pool_cap in ledger, "LEDGER.md does not give the pool ceiling %s" % pool_cap)
 arena_md = open(os.path.join(ROOT, "docs", "design", "ARENA.md"), encoding="utf-8").read()
 kept_chunks = constant("engine/crt/core.h", r"#define BARENA_POOL_CHUNKS (\d+)")
 kept_kib = int(constant("engine/crt/core.h", r"#define BARENA_POOL_BYTES \(\(size_t\)(\d+) \* 1024\)"))

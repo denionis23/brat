@@ -1351,6 +1351,10 @@ static bint _vch_total_slots = 0;
 /* Asked before a wait, defined with the tasks: nonzero when the wait is over. */
 static int vtask_lost(VChan *c);
 
+/* Around a wait, defined with the pool: a worker that waits is not working. */
+static void bpool_wait_begin(void);
+static void bpool_wait_end(void);
+
 /* A closed slot goes back to the table once it holds nothing and has no active callers. */
 static void _vch_put(VChan *c) {
     _vch_tab_lock();
@@ -1423,7 +1427,9 @@ BFN Val vchan_send(Val h, Val v) {
     _vch_lk(c);
     while (c->len == c->cap && !c->closed) {
         if (vtask_lost(c)) { _vch_ul(c); _vch_put(c); return vunwind; }
+        bpool_wait_begin();
         _vch_wait_snd(c);
+        bpool_wait_end();
     }
     if (c->closed) { _vch_ul(c); _vch_put(c); return _verr_c("send on closed channel"); }
     Val stored = barena_depth ? vown(v) : vrc_inc(v);
@@ -1442,7 +1448,9 @@ BFN Val vchan_recv(Val h) {
     _vch_lk(c);
     while (c->len == 0 && !c->closed) {
         if (vtask_lost(c)) { _vch_ul(c); _vch_put(c); return vunwind; }
+        bpool_wait_begin();
         _vch_wait_rcv(c);
+        bpool_wait_end();
     }
     if (c->len == 0) {
         _vch_ul(c);
@@ -1607,17 +1615,21 @@ struct BTask {
 };
 static BTask *g_done = 0;
 
-/* Lazy persistent pool: one OS thread per spawn segfaults around 300. */
+/* Lazy persistent pool: one OS thread per spawn segfaults around 300. It
+ * starts with BPOOL_MAX threads at most and grows to BPOOL_CAP while its
+ * workers wait on channels. */
 #define BPOOL_MAX 32
+#define BPOOL_CAP 128
 #if defined(_WIN32)
-static HANDLE g_pool[BPOOL_MAX];
+static HANDLE g_pool[BPOOL_CAP];
 #else
-static pthread_t g_pool[BPOOL_MAX];
+static pthread_t g_pool[BPOOL_CAP];
 #endif
 static BTask *g_q_head = 0;
 static BTask *g_q_tail = 0;
 static bint g_q_nleft = 0;
 static bint g_parked = 0;
+static bint g_pool_waiting = 0;     /* workers inside a channel wait */
 static int g_pool_stop = 0;
 static int g_pool_started = 0;
 static int BRAT_UNUSED g_pool_atexit_reg = 0;
@@ -1625,6 +1637,7 @@ static int BRAT_UNUSED g_pool_atexit_reg = 0;
 static pid_t g_pool_pid = 0;
 #endif
 static BTLS int g_btask_self;
+static BTLS int g_pool_thread;      /* this thread is a pool worker */
 
 #if defined(_WIN32)
 static SRWLOCK btlock = SRWLOCK_INIT;
@@ -1793,6 +1806,38 @@ static void bpool_wake(void) {
 #endif
 }
 
+/* A worker that waits on a channel waits for another task. With every worker
+ * waiting that way and that task still in the queue, nothing would ever run
+ * it: four tasks in `recv` and the one that sends hung on a machine with four
+ * cores and ran on one with five. The pool gains a thread then, so a wait
+ * costs the queue nothing. The thread stays for the rest of the run. */
+static void bpool_grow_locked(void) {
+    int n = g_pool_started;
+    if (!g_q_head || g_pool_stop || n <= 0 || n >= BPOOL_CAP || g_pool_waiting < n) return;
+#if defined(_WIN32)
+    g_pool[n] = CreateThread(NULL, 0, bpool_worker, NULL, 0, NULL);
+    if (!g_pool[n]) return;
+#else
+    if (pthread_create(&g_pool[n], NULL, bpool_worker, NULL) != 0) return;
+#endif
+    g_pool_started = n + 1;
+}
+
+static void bpool_wait_begin(void) {
+    if (!g_pool_thread) return;
+    btask_lock();
+    g_pool_waiting++;
+    bpool_grow_locked();
+    btask_unlock();
+}
+
+static void bpool_wait_end(void) {
+    if (!g_pool_thread) return;
+    btask_lock();
+    g_pool_waiting--;
+    btask_unlock();
+}
+
 static void bpool_idle_wake(void) {
 #if !defined(_WIN32)
     pthread_cond_broadcast(&g_q_idle);
@@ -1908,6 +1953,7 @@ static DWORD WINAPI bpool_worker(void *p) {
 static void *bpool_worker(void *p) {
 #endif
     (void)p;
+    g_pool_thread = 1;
     for (;;) {
         btask_lock();
         while (g_q_head == 0 && !g_pool_stop) {
@@ -1963,6 +2009,7 @@ BFN void vspawn(Val clo) {
     else g_q_head = t;
     g_q_tail = t;
     g_q_nleft++;
+    bpool_grow_locked();
     bpool_wake();
     bpool_idle_wake();
     btask_unlock();
@@ -2102,6 +2149,7 @@ BFN Val vparfor(Val vec, Val clo, Val unit, Val op) {
         g_q_nleft++;
         off += len;
     }
+    bpool_grow_locked();
 #if !defined(_WIN32)
     if (chunks > 1) pthread_cond_broadcast(&g_q_cond);
     else pthread_cond_signal(&g_q_cond);
