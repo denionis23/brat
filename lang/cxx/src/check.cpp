@@ -2943,15 +2943,26 @@ void FnTyper::stmt(const Stmt &s) {
         break;
     }
     case SK::Expr: {
-        expr(*s.e1);
+        const Ty got = expr(*s.e1);
         const Expr &e = *s.e1;
-        if (e.k == EK::Call && !env.count(e.a)) {
+        const bool named = e.k == EK::Call && !env.count(e.a);
+        bool raiser = false;
+        if (named) {
             auto f = sigs.find(e.a);
-            if (f != sigs.end() && f->second.raises && !g_caught.count(&s))
+            raiser = f != sigs.end() && f->second.raises;
+            if (raiser && !g_caught.count(&s))
                 must("`" + e.a + "` can raise, and the `Err` it returns is dropped here "
                      "(hint: `" + e.a + "(...)?` passes it on, `let _ = " + e.a +
                      "(...)` ignores it)");
         }
+        // A statement throws the value of its call away, and with a declared
+        // `Result` an `Err` goes with it. A `try` around the statement changes
+        // nothing: only `?` sends an `Err` to the `catch`. A fn that raises is
+        // left to the rule above: it has its own message, and in a `try` body
+        // its call is the call with `?`.
+        if ((named || e.k == EK::MCall) && !raiser && got.k == Ty::Result)
+            must("the `Result` of this call is dropped here (hint: `match` handles it, "
+                 "`?` after the call passes an `Err` on, `let _ = ...` ignores it)");
         if (current_region() == 0) break;
         if (e.k == EK::Closure) {
             std::set<std::string> ms;

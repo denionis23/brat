@@ -331,6 +331,60 @@ example.brat:9: error: `save` can raise, and the `Err` it returns is dropped her
   |   save(12)
 ```
 
+A call declared to return a `Result` cannot stand as a statement either, and
+a `try` around it makes no difference: only `?` sends an `Err` to the `catch`.
+The declaration is the `-> Result[...]` of a function or a method, or the
+signature of a builtin such as `write_file` or of a module function such as
+`fs.remove`. A function that calls `raise` itself keeps the rule above,
+whatever it declares. A value that is not wanted is dropped in the open with
+`let _ = ...`:
+
+```brat run
+fn port(text: str) -> Result[i64, str] {
+  let n = text.parse_int()?
+  return Ok(n)
+}
+
+fn main() -> i64 {
+  let _ = port("http")
+  try {
+    port("8080")?
+    port("smtp")?
+    print("not reached")
+  } catch e {
+    print("caught: {e}")
+  }
+  return 0
+}
+```
+
+```output
+caught: not a number
+```
+
+```brat check
+fn port(text: str) -> Result[i64, str] {
+  let n = text.parse_int()?
+  return Ok(n)
+}
+
+fn main() -> i64 {
+  try {
+    port("smtp")
+  } catch e {
+    print("caught: {e}")
+  }
+  return 0
+}
+```
+
+```diagnostics
+example.brat: 0 error(s), 0 warning(s)
+example.brat: 1 type error(s)
+example.brat:8: error: the `Result` of this call is dropped here (hint: `match` handles it, `?` after the call passes an `Err` on, `let _ = ...` ignores it)
+  |     port("smtp")
+```
+
 An error nobody handles ends the program with status 1 and
 `unhandled: Err('...')` on stderr. `brat run` adds ` at file.brat:N`, the file
 and line the error came from. `brat run -O2` and `brat build` leave it out

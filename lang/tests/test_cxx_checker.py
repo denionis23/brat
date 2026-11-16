@@ -102,9 +102,39 @@ FIXTURES = {
                         # A `try` catches for its own statements, not for a closure written in it.
                         'fn deep() {\n  try {\n    let f = fn() {\n      save(6)\n      return 0\n    }\n    print(f())\n'
                         '  } catch e {\n    print(e)\n  }\n  return 0\n}\n'),
+    # A call declared to return a `Result` cannot stand as a statement: a fn that
+    # passes an `Err` on with `?`, one that relays another fn, a method, a
+    # builtin, a std fn, an `Err(...)` written out.
+    'result_drop.brat': ('import std.fs\nstruct Box { cap: i64 }\n'
+                         'impl Box {\n  fn make(cap: i64) -> Result[Box, str] {\n    if cap < 0 {\n      return Err("negative")\n    }\n'
+                         '    return Ok(Box { cap: cap })\n  }\n'
+                         '  fn put(self, n: i64) -> Result[i64, str] {\n    if n > self.cap {\n      return Err("too big")\n    }\n'
+                         '    return Ok(n)\n  }\n}\n'
+                         'fn port(text: str) -> Result[i64, str] {\n  let n = text.parse_int()?\n  return Ok(n)\n}\n'
+                         'fn relay(text: str) -> Result[i64, str] {\n  return port(text)\n}\n'
+                         'fn both(n: i64) -> Result[i64, str] {\n  if n > 9 {\n    raise("too big")\n  }\n  return Ok(n)\n}\n'
+                         'fn dropped(b: Box) -> i64 {\n  port("x")\n  relay("x")\n  b.put(12)\n  Box.make(-1)\n'
+                         '  write_file("x.txt", "y")\n  fs.remove("x.txt")\n  "12".parse_int()\n  Err("lost")\n  both(12)\n'
+                         # A `try` does not take the `Result` of a statement in it: `?` does. A fn
+                         # that raises keeps the rule of `raise_drop.brat`.
+                         '  try {\n    port("x")\n    both(12)\n  } catch e {\n    print(e)\n  }\n'
+                         # A statement in a closure body drops its value like any other.
+                         '  let f = fn() {\n    port("x")\n    return 0\n  }\n  return f()\n}\n'
+                         # Taken in the open: `let _ =`, `?`, `match`, `?` under a `try`.
+                         'fn kept(b: Box) -> Result[i64, str] {\n  let _ = port("x")\n  let _ = b.put(12)\n'
+                         '  let _ = fs.remove("x.txt")\n  port("x")?\n  b.put(1)?\n'
+                         '  match relay("x") {\n    Ok(n) => print(n),\n    Err(why) => print(why),\n  }\n'
+                         '  try {\n    port("x")?\n    write_file("x.txt", "y")?\n  } catch e {\n    print(e)\n  }\n'
+                         '  let n = relay("1")?\n  return Ok(n)\n}\n'),
     # The arguments after a closure belong to the statement, not to the closure's last line.
     'closure_line.brat': 'fn f(a: i64) -> i64 {\n  return a\n}\nfn apply(g, x) {\n  return g(x)\n}\nprint(apply(fn(x) {\n  return x\n}, f(1, nope)))\n',
 }
+
+
+def result_dropped(line):
+    return ("result_drop.brat:%d: error: the `Result` of this call is dropped here "
+            "(hint: `match` handles it, `?` after the call passes an `Err` on, `let _ = ...` ignores it)" % line)
+
 
 # Expected errors, including source locations.
 EXPECT = {
@@ -186,6 +216,12 @@ EXPECT = {
         "raise_drop.brat:53: error: `save` can raise, and the `Err` it returns is dropped here "
         "(hint: `save(...)?` passes it on, `let _ = save(...)` ignores it)",
     ],
+    "result_drop.brat": (
+        [result_dropped(line) for line in range(31, 39)]
+        + ["result_drop.brat:39: error: `both` can raise, and the `Err` it returns is dropped here "
+           "(hint: `both(...)?` passes it on, `let _ = both(...)` ignores it)"]
+        + [result_dropped(41), result_dropped(47)]
+    ),
     "closure_line.brat": [
         "closure_line.brat:7: error: use of undeclared var `nope`",
         "closure_line.brat:7: error: `f` wants 1 args, got 2",

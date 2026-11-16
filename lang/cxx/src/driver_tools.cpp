@@ -420,12 +420,12 @@ fn answer(conn: i64) -> Res {
   match got {
     Ok(text) => {
       if text == "" {
-        tcp_close(conn)
+        let _ = tcp_close(conn)
         return Err("peer closed before sending")
       }
       log.info("request of {len(text)} bytes")
       let sent = tcp_send(conn, "ok\n")
-      tcp_close(conn)
+      let _ = tcp_close(conn)
       match sent {
         Ok(n) => {
           return Ok(n)
@@ -436,7 +436,7 @@ fn answer(conn: i64) -> Res {
       }
     },
     Err(reason) => {
-      tcp_close(conn)
+      let _ = tcp_close(conn)
       return Err(reason)
     }
   }
@@ -469,12 +469,12 @@ fn main() -> i64 {
           },
           Err(reason) => {
             log.error("accept failed: {reason}")
-            tcp_close(fd)
+            let _ = tcp_close(fd)
             return 1
           }
         }
       }
-      tcp_close(fd)
+      let _ = tcp_close(fd)
       print("served={served} failed={failed}")
       return 0
     },

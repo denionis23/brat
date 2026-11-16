@@ -228,12 +228,12 @@ MANY = '''fn main() -> i64 {
       }
       print(len(clients) + len(servers) + 1)
       for cf in clients {
-        tcp_close(cf)
+        let _ = tcp_close(cf)
       }
       for af in servers {
-        tcp_close(af)
+        let _ = tcp_close(af)
       }
-      tcp_close(s)
+      let _ = tcp_close(s)
       print("done")
     },
     Err(e) => { print(e) }
@@ -284,14 +284,14 @@ fn main() -> i64 {
               close_it(stale)
               print(tcp_send(af, "x"))
               join_all()
-              tcp_close(af)
+              let _ = tcp_close(af)
             },
             Err(e) => { print(e) }
           }
         },
         Err(e) => { print(e) }
       }
-      tcp_close(s)
+      let _ = tcp_close(s)
     },
     Err(e) => { print(e) }
   }
@@ -368,7 +368,7 @@ BRANCH = '''fn serve(fd: i64, r: i64) -> i64 {
       print(x)
     },
     Err(reason) => {
-      tcp_close(fd)
+      let _ = tcp_close(fd)
       return 1
     }
   }
@@ -395,8 +395,8 @@ RACE = '''fn main() -> i64 {
   let l = tcp_listen("127.0.0.1:47376")
   match l {
     Ok(s) => {
-      spawn { tcp_recv(s, 1) }
-      tcp_close(s)
+      spawn { let _ = tcp_recv(s, 1) }
+      let _ = tcp_close(s)
       join_all()
     },
     Err(_) => {}

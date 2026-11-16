@@ -134,6 +134,11 @@ All ownership checking is intra-procedural over local places (`x`, `x.f`,
   returns `Err(x)` to its caller. A call of such a fn written as a statement
   unwinds to the `try` whose body it is in, as the call with `?` does; with no
   `try` there it is a compile error, because the `Err` would be dropped.
+- A call whose declared type is `Result` (a fn or a method with
+  `-> Result[...]`, a builtin, a module fn) written as a statement is a compile
+  error, in a `try` body as well: the value is matched, passed on with `?`, or
+  dropped with `let _ = ...`. A fn with a `raise` of its own follows the rule
+  above instead, whatever it declares.
 - A fn that declares a result (`-> T`) leaves by `return` or `raise` on every
   path: a body that can run off its end is a compile error. An `if` with an
   `else`, a `match` over variants and a `while true` without `break` count when
