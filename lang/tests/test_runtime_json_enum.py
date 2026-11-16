@@ -176,6 +176,73 @@ assert out3 == "\n".join([
     "true",
 ]) + "\n", out3
 
+# Non-finite floats must raise in both JSON serializers, including inside containers.
+out_nonfinite = build_and_run("json_nonfinite", """
+import std.json
+
+fn show(v) {
+    try {
+        print(json.stringify(v))
+    } catch e {
+        print("caught: {e}")
+    }
+}
+
+fn show_indent(v) {
+    try {
+        print(json.stringify_indent(v, 2))
+    } catch e {
+        print("caught: {e}")
+    }
+}
+
+fn main() -> i64 {
+    let inf = 1e308 * 10.0
+    let neg = 0.0 - inf
+    let nan = inf - inf
+    show(inf)
+    show(neg)
+    show(nan)
+    show([1, inf])
+    show({"ok": [None, 1.0], "bad": nan})
+    show_indent(inf)
+    show_indent(neg)
+    show_indent(nan)
+    show_indent([nan, 1])
+    show_indent({"nested": [neg]})
+    let mut wide = {}
+    for i in 0..20 {
+        wide[i] = "value {i}"
+    }
+    wide["zzz"] = inf
+    show(wide)
+    show_indent(wide)
+    print(json.stringify([None, 1.25, "x"]))
+    print(json.stringify_indent({"value": None}, 2))
+    return 0
+}
+""")
+assert out_nonfinite == (
+    "caught: cannot serialize non-finite float as JSON\n" * 12
+    + '[null,1.25,"x"]\n{\n  "value": null\n}\n'
+), out_nonfinite
+
+uncaught_json = os.path.join(TMP, "json_uncaught.brat")
+with open(uncaught_json, "w", encoding="utf-8") as f:
+    f.write("""import std.json
+fn main() -> i64 {
+    let inf = 1e308 * 10.0
+    let text = json.stringify({"amount": [1.0, inf]})
+    print("serialized: {text}")
+    return 0
+}
+""")
+for level in ("-O0", "-O2"):
+    r = subprocess.run([BIN, "run", level, uncaught_json], capture_output=True,
+                       text=True, timeout=120)
+    assert r.returncode != 0 and not r.stdout, (level, r.returncode, r.stdout, r.stderr)
+    assert "unhandled:" in r.stderr and "cannot serialize non-finite float as JSON" in r.stderr, r.stderr
+
 # 4. Nullable `const char *` C FFI parameter typed as `ptr[u8]`.
 hdr = os.path.join(TMP, "nullable_cstr.h")
 csrc = os.path.join(TMP, "nullable_cstr.c")

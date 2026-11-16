@@ -2031,7 +2031,7 @@ static void _bjson_emit(_BJsonOut *o, Val v, bint indent, bint depth) {
     }
     case V_FLOAT: {
         if (!isfinite(v.as.fval)) {
-            _bjson_put(o, "null", 4);
+            vraise("cannot serialize non-finite float as JSON");
             return;
         }
         const char *fs = vfmt_double(v.as.fval);
