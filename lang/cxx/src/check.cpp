@@ -1020,6 +1020,28 @@ static const std::vector<MethDef> MAP_METH = {
     {"get_or", {"dyn", "dyn"}, "dyn", false},
 };
 
+const std::map<std::string, std::pair<size_t, size_t>> &builtin_method_arities() {
+    static const std::map<std::string, std::pair<size_t, size_t>> builtin_arity = {
+        {"split", {0, 1}}, {"lines", {0, 0}}, {"trim", {0, 0}}, {"lower", {0, 0}},
+        {"upper", {0, 0}}, {"starts_with", {1, 1}}, {"ends_with", {1, 1}},
+        {"contains", {1, 1}}, {"parse_int", {0, 0}}, {"replace", {2, 2}},
+        {"index_of", {1, 1}}, {"repeat", {1, 1}}, {"split_once", {1, 1}},
+        {"parse_float", {0, 0}}, {"slice", {2, 2}}, {"join", {1, 1}},
+        {"push", {1, 1}}, {"pop", {0, 0}}, {"first", {0, 0}}, {"last", {0, 0}},
+        {"sort", {0, 0}}, {"rev", {0, 0}}, {"ins", {2, 2}}, {"del", {1, 1}}, {"swap", {2, 2}},
+        {"sum", {0, 0}}, {"min", {0, 0}}, {"max", {0, 0}}, {"enumerate", {0, 0}},
+        {"zip", {1, 1}}, {"chunks", {1, 1}}, {"pos", {1, 1}}, {"get", {1, 1}},
+        {"has", {1, 1}}, {"keys", {0, 0}}, {"set", {2, 2}}, {"items", {0, 0}},
+        {"vals", {0, 0}}, {"get_or", {2, 2}}, {"copy", {0, 0}}, {"chars", {0, 0}},
+        {"send", {1, 1}}, {"recv", {0, 0}}, {"close", {0, 0}},
+        {"map", {1, 1}}, {"filter", {1, 1}}, {"any", {1, 1}}, {"all", {1, 1}},
+        {"find", {1, 1}}, {"sort_by", {1, 1}}, {"fold", {2, 2}},
+        {"unwrap", {0, 0}}, {"unwrap_or", {1, 1}}, {"is_ok", {0, 0}},
+        {"is_err", {0, 0}}, {"is_some", {0, 0}}, {"is_none", {0, 0}},
+    };
+    return builtin_arity;
+}
+
 static const std::map<std::string, Ty> BRES = {
     {"len", Ty::of(Ty::Int)}, {"str", Ty::of(Ty::Str)},
     {"i64", Ty::of(Ty::Int)}, {"f64", Ty::of(Ty::Float)},
@@ -2393,24 +2415,7 @@ Ty FnTyper::meth(const Ty &ot, const std::string &name, const std::vector<ExprP>
         if (ot.k == Ty::Dyn || ot.k == Ty::Tag) {
             const bool user_defined = sigs.count("__impl__." + name) != 0;
             if (!user_defined) {
-                static const std::map<std::string, std::pair<size_t, size_t>> builtin_arity = {
-                    {"split", {0, 1}}, {"lines", {0, 0}}, {"trim", {0, 0}}, {"lower", {0, 0}},
-                    {"upper", {0, 0}}, {"starts_with", {1, 1}}, {"ends_with", {1, 1}},
-                    {"contains", {1, 1}}, {"parse_int", {0, 0}}, {"replace", {2, 2}},
-                    {"index_of", {1, 1}}, {"repeat", {1, 1}}, {"split_once", {1, 1}},
-                    {"parse_float", {0, 0}}, {"slice", {2, 2}}, {"join", {1, 1}},
-                    {"push", {1, 1}}, {"pop", {0, 0}}, {"first", {0, 0}}, {"last", {0, 0}},
-                    {"sort", {0, 0}}, {"rev", {0, 0}}, {"ins", {2, 2}}, {"del", {1, 1}}, {"swap", {2, 2}},
-                    {"sum", {0, 0}}, {"min", {0, 0}}, {"max", {0, 0}}, {"enumerate", {0, 0}},
-                    {"zip", {1, 1}}, {"chunks", {1, 1}}, {"pos", {1, 1}}, {"get", {1, 1}},
-                    {"has", {1, 1}}, {"keys", {0, 0}}, {"set", {2, 2}}, {"items", {0, 0}},
-                    {"vals", {0, 0}}, {"get_or", {2, 2}}, {"copy", {0, 0}}, {"chars", {0, 0}},
-                    {"send", {1, 1}}, {"recv", {0, 0}}, {"close", {0, 0}},
-                    {"map", {1, 1}}, {"filter", {1, 1}}, {"any", {1, 1}}, {"all", {1, 1}},
-                    {"find", {1, 1}}, {"sort_by", {1, 1}}, {"fold", {2, 2}},
-                    {"unwrap", {0, 0}}, {"unwrap_or", {1, 1}}, {"is_ok", {0, 0}},
-                    {"is_err", {0, 0}}, {"is_some", {0, 0}}, {"is_none", {0, 0}},
-                };
+                const auto &builtin_arity = builtin_method_arities();
                 auto it = builtin_arity.find(name);
                 if (it != builtin_arity.end()) {
                     const size_t n = args.size() - start;

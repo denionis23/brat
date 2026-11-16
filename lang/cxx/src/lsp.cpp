@@ -2573,12 +2573,8 @@ private:
                             }
                         }
                     }
-                    for (const char *m : {"push", "pop", "slice", "split", "join", "trim", "lower", "upper",
-                                          "contains", "starts_with", "ends_with", "index_of", "replace",
-                                          "lines", "chars", "parse_int", "parse_float", "keys", "has",
-                                          "get", "set", "del", "map", "filter", "fold", "sort", "sort_by",
-                                          "unwrap", "unwrap_or", "is_ok", "is_err", "is_some", "is_none"}) {
-                        add_item(m, 2, "builtin method");
+                    for (const auto &m : builtin_method_arities()) {
+                        add_item(m.first, 2, "builtin method");
                     }
                 }
             }

@@ -6,6 +6,7 @@
 #include <optional>
 #include <set>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "ast.h"
@@ -101,6 +102,9 @@ inline Ty Ty::other(std::string name) {
 std::string type_name(const Ty &t);
 bool type_ok(const Ty &want, const Ty &got);
 bool numeric(const Ty &t);
+
+// Shared with the language server so new built-in methods appear in completion.
+const std::map<std::string, std::pair<size_t, size_t>> &builtin_method_arities();
 
 struct TypeErr {
     int line = 0;

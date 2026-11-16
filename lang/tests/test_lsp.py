@@ -10,6 +10,7 @@ import _cxx
 
 import json
 import os
+import re
 import subprocess
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -142,6 +143,62 @@ check(d["result"] == {"uri": uri,
                       "range": {"start": {"line": 0, "character": 3},
                                 "end": {"line": 0, "character": 8}}},
       "definition of twice: %r" % (d["result"],))
+
+unknown_text = "fn inspect(x) {\n  x.copy()\n}\n"
+unknown_uri = "file://" + write("unknown.brat", unknown_text)
+c.notify("textDocument/didOpen", {"textDocument": {
+    "uri": unknown_uri, "languageId": "brat", "version": 1, "text": unknown_text}})
+msg = c.wait_notification("textDocument/publishDiagnostics")
+check(msg["params"]["uri"] == unknown_uri and msg["params"]["diagnostics"] == [],
+      "dynamic receiver document opens cleanly")
+with open(os.path.join(HERE, "..", "..", "docs", "guide", "builtins.md"), encoding="utf-8") as f:
+    methods = set(re.findall(r"`[a-z]+\.([a-z_]+)\(", f.read()))
+items = c.request("textDocument/completion", {
+    "textDocument": {"uri": unknown_uri},
+    "position": {"line": 1, "character": 4}})["result"]
+labels = [item["label"] for item in items]
+check(set(labels) == methods,
+      "built-in completions missing: %s; unexpected: %s" %
+      (sorted(methods - set(labels)), sorted(set(labels) - methods)))
+check(len(labels) == len(set(labels)) and all(item["kind"] == 2 for item in items),
+      "built-in completions have unique labels and method kind")
+
+swap_text = "let mut v = [1, 2]\nv.swap(0, 1)\n"
+swap_uri = "file://" + write("swap.brat", swap_text)
+c.notify("textDocument/didOpen", {"textDocument": {
+    "uri": swap_uri, "languageId": "brat", "version": 1, "text": swap_text}})
+msg = c.wait_notification("textDocument/publishDiagnostics")
+check(msg["params"]["uri"] == swap_uri and msg["params"]["diagnostics"] == [],
+      "swap document opens cleanly")
+for column in (2, 4):
+    items = c.request("textDocument/completion", {
+        "textDocument": {"uri": swap_uri},
+        "position": {"line": 1, "character": column}})["result"]
+    swaps = [item for item in items if item["label"] == "swap"]
+    check(len(swaps) == 1 and swaps[0]["kind"] == 2,
+          "swap method completion at column %d: %r" % (column, items))
+c.notify("textDocument/didChange", {
+    "textDocument": {"uri": swap_uri, "version": 2},
+    "contentChanges": [{"text": "let mut v = [1, 2]\nv.sw\n"}]})
+c.wait_notification("textDocument/publishDiagnostics")
+items = c.request("textDocument/completion", {
+    "textDocument": {"uri": swap_uri},
+    "position": {"line": 1, "character": 4}})["result"]
+labels = [item["label"] for item in items]
+check("swap" in labels and all(label.startswith("sw") for label in labels),
+      "swap completion in unfinished method call: %r" % items)
+for version, (prefix, method) in enumerate((("sen", "send"), ("rec", "recv"),
+                                            ("clo", "close")), 3):
+    c.notify("textDocument/didChange", {
+        "textDocument": {"uri": swap_uri, "version": version},
+        "contentChanges": [{"text": "let ch = chan(1)\nch." + prefix + "\n"}]})
+    c.wait_notification("textDocument/publishDiagnostics")
+    items = c.request("textDocument/completion", {
+        "textDocument": {"uri": swap_uri},
+        "position": {"line": 1, "character": 3 + len(prefix)}})["result"]
+    labels = [item["label"] for item in items]
+    check(method in labels and all(label.startswith(prefix) for label in labels),
+          "channel completion for %s: %r" % (prefix, items))
 
 # Local binding: cursor on `a` at line 6 resolves to the `let a` on line 5.
 d = c.request("textDocument/definition", {
