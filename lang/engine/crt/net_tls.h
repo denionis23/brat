@@ -1085,6 +1085,9 @@ static Val vown_copy_d(Val v, bint depth) {
 }
 static Val vown_copy(Val v) { return vown_copy_d(v, 0); }
 BFN Val vown(Val v) {
+    /* After a failed `own(v[i])` the argument is the error in flight, and a
+       copy of it is a second Err that nobody releases. */
+    if (verr_pending()) return vunwind;
     int saved = barena_depth;
     barena_depth = 0;
     Val r = vown_copy(v);

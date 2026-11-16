@@ -8,10 +8,10 @@ captures string work too and a block can be reset in one move.
 
 What this file pins: `run -O0` and the built binary print the same thing, the binary is clean
 under AddressSanitizer and LeakSanitizer, `own(...)` hands out a value that survives
-the reset, and the escape rule still refuses assigning an arena string to an outer
-binding. The three timings at the end are a measurement, not a threshold: they are
-printed so the next reader has numbers instead of an adjective, including the case
-where the arena loses.
+the reset and copies nothing when its argument fails, and the escape rule still
+refuses assigning an arena string to an outer binding. The three timings at the end
+are a measurement, not a threshold: they are printed so the next reader has numbers
+instead of an adjective, including the case where the arena loses.
 """
 import _cxx
 
@@ -53,6 +53,12 @@ fn main() -> i64 {
   }
   print(keep)
   print(work(3))
+  let rows = [keep]
+  try {
+    print(own(rows[1]))
+  } catch e {
+    print(e)
+  }
   return 0
 }
 '''
@@ -108,7 +114,7 @@ def build(name, src, sanitize=False):
     return path, exe
 
 
-want = "checksum 5200\n78\n"
+want = "checksum 5200\n78\nindex out of range\n"
 
 # 1. the program with one arena block: `run -O0` and a sanitized build, leak free
 path, exe = build("arena", WORKLOAD, sanitize=True)
