@@ -53,7 +53,7 @@ RECEIVERS = {
 VALUES = '[0, 1, -1, 2.5, "", "a", true, [], [1, 2], {}, 4611686018427387904]'
 BAD_TEXT = re.compile(
     r"invalid literal|NoneType|object|unsupported|not supported|positional|"
-    r"must be|Traceback|Error:|can't|cannot|argument \d|takes \d|no method affix"
+    r"must be|Traceback|Error:|can't|cannot|argument \d|takes \d|no method affix|no method case"
 )
 
 
@@ -98,12 +98,16 @@ with open(probe, "w", encoding="utf-8") as f:
 fn call_starts(x, y) { return x.starts_with(y) }
 fn call_ends(x, y) { return x.ends_with(y) }
 fn call_contains(x, y) { return x.contains(y) }
+fn call_upper(x) { return x.upper() }
+fn call_lower(x) { return x.lower() }
 fn idx(x, i) { return x[i] }
 
 fn main() -> i64 {
     try { call_starts(123, "a") } catch e { assert(e == "no method starts_with") }
     try { call_ends(123, "a") } catch e { assert(e == "no method ends_with") }
     try { call_contains(123, "a") } catch e { assert(e == "no method contains") }
+    try { call_upper(123) } catch e { assert(e == "no method upper") }
+    try { call_lower(123) } catch e { assert(e == "no method lower") }
     try { call_starts("abc", 1) } catch e { assert(e == "method `starts_with`: bad argument") }
     try { idx(Ok(42), 1) } catch e { assert(e == "index of non-indexable") }
     let mut v = 0

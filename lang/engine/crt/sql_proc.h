@@ -1514,7 +1514,7 @@ BFN unsigned vcp_lower_ctx(unsigned c, unsigned prev, const char *rest) {
 }
 
 BFN Val vcase(Val s, int up) {
-    if (s.tag != V_STR) { vraise("no method case"); return vunwind; }
+    if (s.tag != V_STR) { vraise(up ? "no method upper" : "no method lower"); return vunwind; }
     const char *sc = vstr_c(&s);
     size_t len = strlen(sc) + 8;
     /* balloc, not malloc: the result is a BRAT string, and a BRAT string is
