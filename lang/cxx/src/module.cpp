@@ -492,6 +492,21 @@ struct Mangler {
     std::map<std::string, std::pair<size_t, std::string>> private_names;
     std::map<std::string, std::vector<std::optional<std::string>>> callback_params;
     std::map<std::string, std::vector<size_t>> const_owners;
+    // The name the mangled program gives a declaration, per kind, with the file
+    // and the source name it stands for.
+    std::map<std::string, std::pair<size_t, std::string>> flat_names;
+
+    // Mangled names are built from module and source names with `__` between
+    // them, so two different declarations can spell the same one: `tick` of
+    // module `s.c` and a function the program itself calls `s__c__tick`.
+    void claim(const char *kind, const std::string &flat, size_t cur, const std::string &source) {
+        auto [it, fresh] = flat_names.try_emplace(std::string(kind) + " " + flat, cur, source);
+        if (fresh || (it->second.first == cur && it->second.second == source)) return;
+        throw ModuleError(std::string(kind) + " `" + it->second.second + "` of " +
+                          set.files[it->second.first].path + " and `" + source + "` of " +
+                          set.files[cur].path + " both get the name `" + flat +
+                          "` in the compiled program; rename one of them");
+    }
 
     // A bare name that two modules export as a `pub const` and nothing in
     // scope binds has no one meaning here.
@@ -1004,6 +1019,7 @@ struct Mangler {
                 const FnDecl &fn = node->fns[0];
                 const std::string original = fn.name.value_or("");
                 const std::string full = mangle(i, original);
+                claim("fn", full, i, original);
                 set.files[i].functions[original] = full;
                 std::vector<std::optional<std::string>> params;
                 for (const Param &p : fn.params) params.push_back(p.ann);
@@ -1026,6 +1042,13 @@ struct Mangler {
         }
         for (size_t i = 0; i < set.files.size(); i++) resolve_module(i, {});
         const_owners = pub_const_owners(set);
+        for (size_t i = 0; i < set.files.size(); i++) {
+            const SourceFile &f = set.files[i];
+            for (const auto &sp : f.body) {
+                const std::string *nm = top_binding(*sp);
+                if (nm) claim("binding", f.ns ? *nm + "__" + *f.ns : *nm, i, *nm);
+            }
+        }
         for (size_t i = 0; i < set.files.size(); i++) {
             for (auto &sp : set.files[i].body) transform_top(*sp, i);
         }

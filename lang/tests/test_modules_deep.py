@@ -181,6 +181,23 @@ def main():
     refused(both, "ambiguous unqualified name `WIDTH`")
     check_cxx_agrees(both, "ambiguous unqualified name `WIDTH`")
 
+    # a name of the program that spells the mangled name of a module's
+    # function or binding is refused, not merged with it
+    write("clash/s/c.brat",
+          "let mut state = 0\npub fn tick() -> i64 {\n  state += 1\n  return state\n}\n")
+    fn_clash = write("clash/app.brat",
+                     "import s.c\nfn s__c__tick() -> i64 { return 77 }\n"
+                     "fn main() -> i64 { print(c.tick(), s__c__tick()); return 0 }\n")
+    refused(fn_clash, "both get the name `s__c__tick`")
+    check_cxx_agrees(fn_clash, "both get the name `s__c__tick`")
+    write("clash_let/s/c.brat",
+          "let mut state = 0\npub fn tick() -> i64 {\n  state += 1\n  return state\n}\n")
+    let_clash = write("clash_let/app.brat",
+                      "import s.c\nlet state__s__c = \"mine\"\n"
+                      "fn main() -> i64 { print(c.tick(), state__s__c); return 0 }\n")
+    refused(let_clash, "both get the name `state__s__c`")
+    check_cxx_agrees(let_clash, "both get the name `state__s__c`")
+
     # an interface decides what is exported, and a re-export of an interface-exported
     # function is public even though the function is not `pub`
     write("iface/lib/thing.brat", "fn hidden() -> i64 { return 42 }\n")
