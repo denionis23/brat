@@ -1354,7 +1354,7 @@ bool check_mutate(const std::string &path, Decls &decl, Borrows &borrows, Errs &
     const std::vector<Borrow> *live = borrows.peek(root);
     if (live && !live->empty()) {
         const Borrow &b = live->back();
-        errs.note("cannot mutate immutable `" + root + "` while borrowed by `" + b.name + "`",
+        errs.note("cannot mutate `" + root + "` while borrowed by `" + b.name + "`",
                   rel_at(b.line, "borrowed by `" + b.name + "` here"));
         return false;
     }

@@ -79,7 +79,7 @@ std::string two_writers(const std::string &p, const std::string &a, const std::s
     return "double mut borrow of `" + p + "`: `" + a + "` clashes with `" + b + "`";
 }
 std::string write_while_read(const std::string &p, const std::string &who) {
-    return "cannot mutate immutable `" + p + "` while borrowed by `" + who + "`";
+    return "cannot mutate `" + p + "` while borrowed by `" + who + "`";
 }
 std::string assign_while_read(const std::string &p, const std::string &who) {
     return "cannot assign `" + p + "` while borrowed by `" + who + "`";

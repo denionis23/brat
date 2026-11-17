@@ -306,7 +306,7 @@ EXPECT = {
     ],
     'mut_while_borrowed.brat': [
         'mut_while_borrowed.brat: 1 error(s), 0 warning(s)',
-        'mut_while_borrowed.brat:3: error: cannot mutate immutable `v` while borrowed by `a`',
+        'mut_while_borrowed.brat:3: error: cannot mutate `v` while borrowed by `a`',
         'mut_while_borrowed.brat:2: note: borrowed by `a` here',
     ],
     'nested_capture.brat': [
@@ -412,7 +412,7 @@ EXPECT = {
     ],
     'swap_borrowed.brat': [
         'swap_borrowed.brat: 1 error(s), 0 warning(s)',
-        'swap_borrowed.brat:4: error: cannot mutate immutable `v` while borrowed by `t`',
+        'swap_borrowed.brat:4: error: cannot mutate `v` while borrowed by `t`',
         'swap_borrowed.brat:3: note: borrowed by `t` here',
     ],
     'swap_immutable.brat': [
