@@ -773,6 +773,14 @@ private:
                     const std::string last = s->a.substr(s->a.rfind('.') + 1);
                     fail("import takes no `as`: after `import " + s->a + "` the prefix is `" + last + ".`", ln);
                 }
+                if (peek().text == "/" && peek().line == ln) {
+                    std::string dotted = s->a;
+                    while (peek().text == "/" && peek(1).kind == TK::Id && peek(1).line == ln) {
+                        step();
+                        dotted += "." + to_str(step().text);
+                    }
+                    fail("an import path is dotted: write `import " + dotted + "`", ln);
+                }
                 return one(std::move(s));
             }
         }
