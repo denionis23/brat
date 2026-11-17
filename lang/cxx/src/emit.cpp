@@ -651,6 +651,7 @@ struct Emitter {
     std::vector<std::string> struct_order;
     std::set<std::string> enums;
     std::set<std::string> exported;
+    std::vector<std::string> *no_c_symbol = nullptr;
     std::map<std::string, std::optional<std::string>> fn_ret;
     std::map<std::string, int> codes;
     std::set<std::string> user_meths;
@@ -9758,6 +9759,11 @@ std::string Emitter::emit_program() {
                 pushes.push_back(cat("vec_push(_a, ", c_struct_to_val(*ann, arg), ");"));
                 abi_ps.push_back(*ann);
             } else {
+                if (no_c_symbol)
+                    no_c_symbol->push_back(cat("`export fn ", exname, "`: parameter `", f.params[i].name,
+                                               "` has ", ann ? cat("type `", *ann, "`, which has")
+                                                             : std::string("no annotation and so"),
+                                               " no C type"));
                 ok = false;
                 break;
             }
@@ -9795,6 +9801,9 @@ std::string Emitter::emit_program() {
             cret = "void *";
             abi_ret = "ptr";
         } else {
+            if (no_c_symbol)
+                no_c_symbol->push_back(cat("`export fn ", exname, "` returns `", *ret,
+                                           "`, which has no C type"));
             continue;
         }
         std::string abi_sig = abi_ret + "(";
@@ -10639,8 +10648,10 @@ std::string emit_program(const std::vector<StmtP> &prog, const std::string &base
                          std::vector<ir::Proof> *proofs, const std::string &target,
                          bool trace_lines, bool debug_lines, const std::string &root_file,
                          const std::map<const Stmt *, std::string> *stmt_files,
-                         const std::map<std::string, std::string> *fn_files) {
+                         const std::map<std::string, std::string> *fn_files,
+                         std::vector<std::string> *no_c_symbol) {
     Emitter em;
+    em.no_c_symbol = no_c_symbol;
     em.base = base_;
     em.opt = opt;
     em.proofs = proofs;

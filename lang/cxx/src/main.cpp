@@ -1612,9 +1612,18 @@ static int build_one(const char *arg0, const std::string &file,
     std::string emitted_c;
     try {
         const std::string root_path = set.files.empty() ? file : set.files[0].path;
+        // A shared library is its exported symbols: an `export fn` that cannot
+        // have one is an error there, and an ordinary function in a program.
+        std::vector<std::string> no_c_symbol;
         std::string c = codegen::emit_program(set.flat, dir_of(file), opt, nullptr, target,
                                               trace_lines, debug_info, root_path,
-                                              &set.stmt_files, &set.fn_files);
+                                              &set.stmt_files, &set.fn_files,
+                                              shared ? &no_c_symbol : nullptr);
+        if (!no_c_symbol.empty()) {
+            for (const std::string &why : no_c_symbol)
+                std::fprintf(stderr, "brat build --shared: %s\n", why.c_str());
+            return 1;
+        }
         if (static_link && !static_explicit &&
             (!link_flags.empty() ||
              c.find("vlib_open(") != std::string::npos ||

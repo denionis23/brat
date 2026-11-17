@@ -198,6 +198,31 @@ def main():
     n += 1
     print("ffi ok: export_shared (native emitter)")
 
+    # An `export fn` whose signature has no C form got no symbol in the library
+    # and the build said `build ok`. A library is refused; a program builds,
+    # the function being an ordinary one there.
+    src = (
+        'export fn gate(n: i64) -> Result[i64, str] {\n'
+        '  if n > 2 { return Err("big") }\n  return Ok(n)\n}\n'
+        'export fn total(xs) -> i64 { return len(xs) }\n'
+        'fn main() -> i64 { return 0 }\n'
+    )
+    gpath = os.path.join(TMP, "export_result.brat")
+    with open(gpath, "w", encoding="utf-8") as f:
+        f.write(src)
+    glib = os.path.join(TMP, "libexport_result.so")
+    p = subprocess.run(_cxx.cli_args("build", gpath, "--shared", "-o", glib),
+                       capture_output=True, text=True, timeout=300)
+    out = p.stdout + p.stderr
+    assert p.returncode != 0 and not os.path.exists(glib), "shared build went through:\n" + out
+    assert "`export fn gate` returns `Result[i64,str]`, which has no C type" in out, out
+    assert "`export fn total`: parameter `xs` has no annotation and so no C type" in out, out
+    p = subprocess.run(_cxx.cli_args("build", gpath, "-o", os.path.join(TMP, "export_result.exe")),
+                       capture_output=True, text=True, timeout=300)
+    assert p.returncode == 0, "program build failed:\n" + (p.stdout + p.stderr)[-500:]
+    n += 1
+    print("ffi ok: export fn with no C signature refused under --shared")
+
     print("FFI ALL GREEN (%d cases)" % n)
 
 
