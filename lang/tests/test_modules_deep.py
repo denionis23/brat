@@ -181,6 +181,54 @@ def main():
     refused(both, "ambiguous unqualified name `WIDTH`")
     check_cxx_agrees(both, "ambiguous unqualified name `WIDTH`")
 
+    # a type without `pub` is its module's own: two modules and the program each
+    # have a `Node` with its own fields, methods, patterns and annotations
+    for tag, fields, lit, body in (
+            ("one", "name: str, port: i64", 'Node { name: "a", port: 80 }',
+             'self.name + ":" + str(self.port)'),
+            ("two", "path: str, depth: i64, flag: bool",
+             'Node { path: "b", depth: 3, flag: true }', 'self.path + "#" + str(self.depth)')):
+        first = fields.split(":")[0]
+        write("types/%s.brat" % tag,
+              "struct Node { %s }\n"
+              "trait Show { fn show(self) -> str }\n"
+              "impl Node {\n  fn describe(self) -> str { return \"%s:\" + %s }\n}\n"
+              "impl Show for Node {\n  fn show(self) -> str { return \"%s\" }\n}\n"
+              "fn kind(v) -> str {\n  match v {\n"
+              "    Node { %s } => { return \"node \" + %s },\n"
+              "    _ => { return \"other\" },\n  }\n}\n"
+              "fn each(xs: vec[Node]) -> vec[str] {\n  let mut out = []\n"
+              "  for x in xs {\n    out.push(x.describe())\n  }\n  return out\n}\n"
+              "pub fn make() { return %s }\n"
+              "pub fn run() {\n  let n: Node = %s\n"
+              "  return [each([n]), kind(n), kind(5), n.show()]\n}\n"
+              % (fields, tag, body, tag, first, first, lit, lit))
+    expect_output(write("types/app.brat",
+               "import one\nimport two\n"
+               "struct Node { x: i64 }\n"
+               "impl Node {\n  fn describe(self) -> str { return \"app:\" + str(self.x) }\n}\n"
+               "fn main() -> i64 {\n  print(one.run())\n  print(two.run())\n"
+               "  let a = one.make()\n  let b = two.make()\n  let c = Node { x: 5 }\n"
+               "  print(a.describe(), b.describe(), c.describe())\n  return 0\n}\n"),
+         "[['one:a:80'], 'node a', 'other', 'one']\n"
+         "[['two:b#3'], 'node b', 'other', 'two']\n"
+         "one:a:80 two:b#3 app:5\n")
+
+    # a private type is not built or matched from another file, and a `pub`
+    # type has one declaration in the program
+    write("types_bad/one.brat", "struct Node { name: str }\npub fn make() { return Node { name: \"a\" } }\n")
+    private_type = write("types_bad/app.brat",
+                         "import one\nfn main() -> i64 {\n"
+                         "  print(Node { name: \"b\" })\n  return 0\n}\n")
+    refused(private_type, "type `Node` is private in module `one`")
+    check_cxx_agrees(private_type, "type `Node` is private in module `one`")
+    write("types_pub/one.brat", "pub struct Config { name: str }\n")
+    write("types_pub/two.brat", "pub struct Config { path: str, depth: i64 }\n")
+    twice = write("types_pub/app.brat",
+                  "import one\nimport two\nfn main() -> i64 { return 0 }\n")
+    refused(twice, "struct `Config` is declared in both")
+    check_cxx_agrees(twice, "struct `Config` is declared in both")
+
     # a name of the program that spells the mangled name of a module's
     # function or binding is refused, not merged with it
     write("clash/s/c.brat",

@@ -42,6 +42,14 @@ imported functions are pruned before code emission). If two imported modules
 export the same function name, an unqualified call fails with `ambiguous
 unqualified name` and asks you to spell `mod_a.fn_name(...)`.
 
+A `struct`, `enum` or `trait` without `pub` is private too. Two modules can
+each have a `Node` with its own fields and methods, and another file cannot
+build or match one. A `pub` type, like a type of the program file itself, has
+one name in the whole program, and a second declaration of that name is
+refused. Variant names are not scoped by their enum or module: `Busy` is one
+tag everywhere, and two enums can share it only with the same number of
+fields.
+
 A module's top-level statements run once, where the first `import` that
 reaches it sits. Modules that only declare functions and types can import each
 other. A cycle in which two modules both have top-level statements is refused

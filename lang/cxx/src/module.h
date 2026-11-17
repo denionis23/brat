@@ -33,6 +33,9 @@ struct SourceFile {
     std::set<std::string> pub;
     std::map<std::string, int> pub_ctors;                 // variant -> arity for exported enums
     std::set<std::string> priv_ctors;                     // variant names of private enums
+    // A struct, enum or trait of a module that is not exported is the module's
+    // own, and carries the module in its name: original -> mangled.
+    std::map<std::string, std::string> types;
     // A re-export remembers where it came from, so a name two modules claim is a
     // diagnostic instead of whichever statement ran last.
     std::map<std::string, std::pair<std::string, std::string>> reexports;

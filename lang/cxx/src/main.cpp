@@ -266,19 +266,22 @@ static void spell_source_names(const std::vector<SourceFile> &files, std::string
                 mod.push_back((*f.ns)[k]);
             }
         }
-        for (const auto &[original, mangled] : f.functions) {
-            if (mangled != *f.ns + "__" + original) continue;
+        auto respell = [&](const std::string &mangled, const std::string &shown) {
             for (size_t at = msg.find(mangled); at != std::string::npos; at = msg.find(mangled, at)) {
                 const size_t end = at + mangled.size();
                 if ((at > 0 && is_word(msg[at - 1])) || (end < msg.size() && is_word(msg[end]))) {
                     at = end;
                     continue;
                 }
-                const std::string shown = mod + "." + original;
                 msg.replace(at, mangled.size(), shown);
                 at += shown.size();
             }
+        };
+        for (const auto &[original, mangled] : f.functions) {
+            if (mangled == *f.ns + "__" + original) respell(mangled, mod + "." + original);
         }
+        // A private type is only ever named in its own file, by its bare name.
+        for (const auto &[original, mangled] : f.types) respell(mangled, original);
     }
 }
 

@@ -177,7 +177,10 @@ All ownership checking is intra-procedural over local places (`x`, `x.f`,
   imported first would run before the other had bound its names.
 - `pub` marks functions, structs, enums, traits and constants exported across
   module boundaries. A top-level `let` or `const` without it is private to its
-  file. When a sibling `.bri` interface file is present, `check.cpp` verifies
+  file, and so is a type: two modules may each declare a private type of one
+  name. An exported type and a type of the entry file share one namespace, in
+  which a name is declared once. Variant names are tags of the whole program.
+  When a sibling `.bri` interface file is present, `check.cpp` verifies
   exported signatures against it.
 
 ## 8. C FFI and ABI verification (`ffi_cdecl.cpp`, `ffi_object.cpp`)

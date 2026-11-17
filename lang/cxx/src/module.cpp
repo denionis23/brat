@@ -7,6 +7,7 @@
 #include "module.h"
 
 #include <algorithm>
+#include <cctype>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
@@ -174,6 +175,74 @@ std::map<std::string, std::vector<size_t>> pub_const_owners(const ModuleSet &set
     }
     return out;
 }
+
+// Renames the private types of one file wherever the file names them: in a
+// declaration, a literal, a pattern, an `impl` and inside an annotation such as
+// `vec[Node]`.
+struct TypeRename {
+    const std::map<std::string, std::string> &to;
+
+    void name(std::string &n) const {
+        auto it = to.find(n);
+        if (it != to.end()) n = it->second;
+    }
+    void ann(std::optional<std::string> &a) const {
+        if (!a) return;
+        std::string out;
+        for (size_t i = 0; i < a->size();) {
+            const auto word = [&](size_t k) {
+                const char c = (*a)[k];
+                return std::isalnum(static_cast<unsigned char>(c)) || c == '_';
+            };
+            if (!word(i)) {
+                out.push_back((*a)[i++]);
+                continue;
+            }
+            size_t end = i;
+            while (end < a->size() && word(end)) end++;
+            std::string tok = a->substr(i, end - i);
+            name(tok);
+            out += tok;
+            i = end;
+        }
+        *a = std::move(out);
+    }
+    void fn(FnDecl &f) const {
+        for (auto &p : f.params) {
+            ann(p.ann);
+            expr(p.def.get());
+        }
+        ann(f.ret);
+        for (auto &st : f.body) stmt(*st);
+    }
+    void expr(Expr *e) const {
+        if (!e) return;
+        if (e->k == EK::StructLit) name(e->a);
+        if (e->k == EK::Call && e->a == "__stag_is" && e->kids.size() == 2 &&
+            e->kids[1]->k == EK::Str)
+            name(e->kids[1]->a);
+        for (auto &k : e->kids) expr(k.get());
+        if (e->fn) fn(*e->fn);
+    }
+    void stmt(Stmt &s) const {
+        if (s.k == SK::Struct || s.k == SK::Enum || s.k == SK::Trait || s.k == SK::Impl) name(s.a);
+        if (s.k == SK::Impl && s.opt1) name(*s.opt1);
+        ann(s.ann);
+        for (auto &f : s.fields) ann(f.ann);
+        for (auto &v : s.variants) {
+            for (auto &fa : v.field_anns) ann(fa);
+        }
+        for (auto &sig : s.sigs) {
+            for (auto &p : sig.params) ann(p.ann);
+            ann(sig.ret);
+        }
+        for (Expr *e : {s.e1.get(), s.e2.get(), s.e3.get()}) expr(e);
+        for (auto &f : s.fns) fn(f);
+        for (auto &st : s.body) stmt(*st);
+        for (auto &st : s.body2) stmt(*st);
+        if (s.els) stmt(*s.els);
+    }
+};
 
 std::string param_ann(const Param &p) {
     if (p.ann && !p.ann->empty()) return *p.ann;
@@ -492,6 +561,9 @@ struct Mangler {
     std::map<std::string, std::pair<size_t, std::string>> private_names;
     std::map<std::string, std::vector<std::optional<std::string>>> callback_params;
     std::map<std::string, std::vector<size_t>> const_owners;
+    // A type of the program file or an exported one has its bare name in the
+    // whole program: name -> the file that declares it.
+    std::map<std::string, size_t> shared_types;
     // The name the mangled program gives a declaration, per kind, with the file
     // and the source name it stands for.
     std::map<std::string, std::pair<size_t, std::string>> flat_names;
@@ -506,6 +578,51 @@ struct Mangler {
                           set.files[it->second.first].path + " and `" + source + "` of " +
                           set.files[cur].path + " both get the name `" + flat +
                           "` in the compiled program; rename one of them");
+    }
+
+    void declare_type(const char *kind, const Stmt &outer, size_t cur) {
+        SourceFile &f = set.files[cur];
+        const std::string &name = inner(outer)->a;
+        const std::string listed = std::string(kind) + ":" + name;
+        const bool exported = f.iface && inner(outer)->k != SK::Trait ? f.iface->count(listed) > 0
+                                                                     : outer.k == SK::Pub;
+        if (f.ns && !exported) {
+            f.types[name] = *f.ns + "__" + name;
+            claim("type", f.types[name], cur, name);
+            return;
+        }
+        auto [it, fresh] = shared_types.try_emplace(name, cur);
+        if (!fresh && it->second != cur) {
+            throw ModuleError(std::string(kind) + " `" + name + "` is declared in both " +
+                              set.files[it->second].path + " and " + f.path +
+                              "; a type of a module is the module's own unless it is `pub`");
+        }
+        claim("type", name, cur, name);
+    }
+
+    // A variant is a tag of the whole program, whatever enum it is declared
+    // in: `Busy(job)` and `Busy(who, n)` cannot both be built.
+    std::map<std::string, std::pair<size_t, size_t>> variant_arity;
+    void declare_variants(const Stmt &en, size_t cur) {
+        for (const auto &v : en.variants) {
+            auto [it, fresh] = variant_arity.try_emplace(v.name, v.fields.size(), cur);
+            if (fresh || it->second.first == v.fields.size()) continue;
+            throw ModuleError("variant `" + v.name + "` takes " + std::to_string(it->second.first) +
+                              " field(s) in " + set.files[it->second.second].path + " and " +
+                              std::to_string(v.fields.size()) + " in " + set.files[cur].path +
+                              "; a variant name is one tag in the whole program");
+        }
+    }
+
+    // A literal or a pattern of a type that only another module has, and keeps
+    // to itself.
+    void refuse_private_type(const std::string &name, size_t cur) {
+        if (set.files[cur].types.count(name) || shared_types.count(name)) return;
+        for (size_t i = 0; i < set.files.size(); i++) {
+            if (i != cur && set.files[i].types.count(name)) {
+                throw ModuleError("type `" + name + "` is private in module `" + module_name(i) + "`");
+            }
+        }
     }
 
     // A bare name that two modules export as a `pub const` and nothing in
@@ -745,11 +862,14 @@ struct Mangler {
         if (e->k == EK::Call) {
             for (auto &k : e->kids) k = walk_expr(std::move(k), cur);
             const std::string original = e->a;
+            if (original == "__stag_is" && e->kids.size() == 2 && e->kids[1]->k == EK::Str)
+                refuse_private_type(e->kids[1]->a, cur);
             e->a = resolve_call(e->a, cur);
             if (e->kids.empty() && e->a == original) check_const(original, cur);
             resolve_callback_args(e->kids, original, e->a, cur);
             return e;
         }
+        if (e->k == EK::StructLit) refuse_private_type(e->a, cur);
         if (e->k == EK::Var) {
             check_const(e->a, cur);
             resolve_fn_value(*e, cur);
@@ -992,7 +1112,12 @@ struct Mangler {
                     callback_params[node->ext.name] = std::move(params);
                     continue;
                 }
+                if (node->k == SK::Trait) {
+                    declare_type("trait", *sp, i);
+                    continue;
+                }
                 if (node->k == SK::Struct) {
+                    declare_type("struct", *sp, i);
                     std::vector<std::string> fspecs;
                     for (const auto &fld : node->fields)
                         fspecs.push_back(fld.name + ": " + fld.ann.value_or("none"));
@@ -1001,6 +1126,8 @@ struct Mangler {
                     continue;
                 }
                 if (node->k == SK::Enum) {
+                    declare_type("enum", *sp, i);
+                    declare_variants(*node, i);
                     arity.emplace_back("enum:" + node->a,
                                        std::make_pair(enum_variant_specs(*node), std::string("@enum")));
                     bool exported = set.files[i].iface
@@ -1051,6 +1178,10 @@ struct Mangler {
         }
         for (size_t i = 0; i < set.files.size(); i++) {
             for (auto &sp : set.files[i].body) transform_top(*sp, i);
+        }
+        for (size_t i = 0; i < set.files.size(); i++) {
+            TypeRename own{set.files[i].types};
+            for (auto &sp : set.files[i].body) own.stmt(*sp);
         }
     }
 };
