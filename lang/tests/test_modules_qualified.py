@@ -118,7 +118,14 @@ def main():
                  "function `twice` is private in module `geo.shape`")
     print("modules qualified ok: imported function as a callback")
 
-    print("MODULES QUALIFIED ALL GREEN (15 asserts)")
+    # a diagnostic about a module function spells it as the source does
+    expect_error(write("values/as_value.brat",
+                       "import geo.shape\nfn main() -> i64 {\n"
+                       "  let f = shape.area\n  return 0\n}\n"),
+                 "use of `geo.shape.area` as a value")
+    print("modules qualified ok: source spelling in a diagnostic")
+
+    print("MODULES QUALIFIED ALL GREEN (16 asserts)")
 
 
 if __name__ == "__main__":

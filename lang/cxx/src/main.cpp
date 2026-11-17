@@ -248,6 +248,40 @@ std::set<std::string> exported_fn_names(const SourceFile &sf) {
     return out;
 }
 
+// The checkers work on the mangled program, where `area` of module `geo.shape`
+// is `geo__shape__area`. A diagnostic spells it the way the source does.
+static void spell_source_names(const std::vector<SourceFile> &files, std::string &msg) {
+    if (msg.find("__") == std::string::npos) return;
+    auto is_word = [](char c) {
+        return std::isalnum(static_cast<unsigned char>(c)) || c == '_';
+    };
+    for (const SourceFile &f : files) {
+        if (!f.ns) continue;
+        std::string mod;
+        for (size_t k = 0; k < f.ns->size(); k++) {
+            if (f.ns->compare(k, 2, "__") == 0) {
+                mod.push_back('.');
+                k++;
+            } else {
+                mod.push_back((*f.ns)[k]);
+            }
+        }
+        for (const auto &[original, mangled] : f.functions) {
+            if (mangled != *f.ns + "__" + original) continue;
+            for (size_t at = msg.find(mangled); at != std::string::npos; at = msg.find(mangled, at)) {
+                const size_t end = at + mangled.size();
+                if ((at > 0 && is_word(msg[at - 1])) || (end < msg.size() && is_word(msg[end]))) {
+                    at = end;
+                    continue;
+                }
+                const std::string shown = mod + "." + original;
+                msg.replace(at, mangled.size(), shown);
+                at += shown.size();
+            }
+        }
+    }
+}
+
 BorrowOut check_sibling_borrows(const std::vector<SourceFile> &files, std::size_t i) {
     std::map<std::string, std::vector<ParamMode>> extra;
     std::set<std::string> extra_consts;
@@ -269,9 +303,16 @@ BorrowOut check_sibling_borrows(const std::vector<SourceFile> &files, std::size_
         for (auto &kv : ps.struct_fields) extra_sfields[kv.first] = kv.second;
         for (auto &kv : ps.fn_rets) extra_frets[kv.first] = kv.second;
     }
-    return borrow_check(files[i].body, extra, files[i].stray, module_heads,
-                        extra_consts, extra_scalar, extra_borrows, extra_owned,
-                        extra_sfields, extra_frets);
+    BorrowOut out = borrow_check(files[i].body, extra, files[i].stray, module_heads,
+                                 extra_consts, extra_scalar, extra_borrows, extra_owned,
+                                 extra_sfields, extra_frets);
+    for (std::vector<BorrowDiag> *diags : {&out.errs, &out.warns}) {
+        for (BorrowDiag &d : *diags) {
+            spell_source_names(files, d.msg);
+            if (d.note) spell_source_names(files, d.note->msg);
+        }
+    }
+    return out;
 }
 
 std::vector<TypeErr> check_sibling_types(const std::vector<SourceFile> &files, std::size_t i) {
@@ -283,7 +324,9 @@ std::vector<TypeErr> check_sibling_types(const std::vector<SourceFile> &files, s
         collect_exports(files[j].body, merged_consts, merged_structs);
         collect_sigs(files[j].body, merged);
     }
-    return type_check(files[i].body, merged, merged_consts, merged_structs);
+    std::vector<TypeErr> errs = type_check(files[i].body, merged, merged_consts, merged_structs);
+    for (TypeErr &e : errs) spell_source_names(files, e.msg);
+    return errs;
 }
 
 int check_programs(const std::vector<SourceFile> &progs, bool quiet) {
@@ -2467,56 +2510,7 @@ int brat_cli_main(int argc, char **argv) {
     }
     if (bad) return 1;
 
-    // `brat check` runs the ownership pass over every file first, then the
-    // type pass; both print their own bill per file.
-    for (size_t i = 0; i < progs.size(); i++) {
-        std::map<std::string, std::vector<ParamMode>> extra;
-        std::set<std::string> extra_consts;
-        std::set<std::string> extra_scalar;
-        std::map<std::string, std::vector<size_t>> extra_borrows;
-        std::set<std::string> extra_owned;
-        std::map<std::string, std::map<std::string, std::string>> extra_sfields;
-        std::map<std::string, std::string> extra_frets;
-        std::set<std::string> module_heads = imported_module_heads(progs[i]);
-        for (size_t j = 0; j < progs.size(); j++) {
-            if (j == i) continue;
-            FnTable ps = pub_sigs(progs[j].body, exported_fn_names(progs[j]));
-            for (auto &kv : ps.sigs) extra[kv.first] = kv.second;
-            module_heads.insert(ps.heads.begin(), ps.heads.end());
-            extra_consts.insert(ps.pub_consts.begin(), ps.pub_consts.end());
-            extra_scalar.insert(ps.scalar_ret.begin(), ps.scalar_ret.end());
-            for (auto &kv : ps.borrows_ret) extra_borrows[kv.first] = kv.second;
-            extra_owned.insert(ps.owned_ret.begin(), ps.owned_ret.end());
-            for (auto &kv : ps.struct_fields) extra_sfields[kv.first] = kv.second;
-            for (auto &kv : ps.fn_rets) extra_frets[kv.first] = kv.second;
-        }
-        BorrowOut out = borrow_check(progs[i].body, extra, progs[i].stray, module_heads,
-                                     extra_consts, extra_scalar, extra_borrows, extra_owned,
-                                     extra_sfields, extra_frets);
-        std::printf("%s: %d error(s), %d warning(s)\n", progs[i].path.c_str(),
-                    static_cast<int>(out.errs.size()), static_cast<int>(out.warns.size()));
-        report(progs[i].path, progs[i].src, out.errs, "error");
-        report(progs[i].path, progs[i].src, out.warns, "warning");
-        if (!out.errs.empty()) bad++;
-    }
-
-    for (size_t i = 0; i < progs.size(); i++) {
-        Sigs merged;
-        std::map<std::string, Ty> merged_consts;
-        std::map<std::string, std::map<std::string, Ty>> merged_structs;
-        for (size_t j = 0; j < progs.size(); j++) {
-            if (j == i) continue;
-            collect_exports(progs[j].body, merged_consts, merged_structs);
-            collect_sigs(progs[j].body, merged);
-        }
-        const SourceFile &f = progs[i];
-        std::vector<TypeErr> errs = type_check(f.body, merged, merged_consts, merged_structs);
-        std::printf("%s: %d type error(s)\n", f.path.c_str(),
-                    static_cast<int>(errs.size()));
-        report(f.path, f.src, errs);
-        if (!errs.empty()) bad++;
-    }
-    return bad ? 1 : 0;
+    return check_programs(progs) ? 1 : 0;
 }
 
 
