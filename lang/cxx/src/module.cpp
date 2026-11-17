@@ -153,6 +153,28 @@ const Stmt *inner(const Stmt &s) {
     return &s;
 }
 
+// The name a top-level statement binds, or null: `_` binds nothing and an `@`
+// name is the parser's own temporary.
+const std::string *top_binding(const Stmt &s) {
+    const Stmt *b = inner(s);
+    if ((b->k != SK::Let && b->k != SK::LetTmp) || b->a == "_" || b->a[0] == '@') return nullptr;
+    return &b->a;
+}
+
+// The modules that export each `pub const`, by index into `files`.
+std::map<std::string, std::vector<size_t>> pub_const_owners(const ModuleSet &set) {
+    std::map<std::string, std::vector<size_t>> out;
+    for (size_t i = 0; i < set.files.size(); i++) {
+        if (!set.files[i].ns) continue;
+        for (const auto &sp : set.files[i].body) {
+            if (sp->k != SK::Pub || !inner(*sp)->konst) continue;
+            std::vector<size_t> &owners = out[inner(*sp)->a];
+            if (owners.empty() || owners.back() != i) owners.push_back(i);
+        }
+    }
+    return out;
+}
+
 std::string param_ann(const Param &p) {
     if (p.ann && !p.ann->empty()) return *p.ann;
     return "none";
@@ -408,6 +430,21 @@ struct Mangler {
     std::map<std::string, std::vector<std::pair<size_t, std::string>>> public_names;
     std::map<std::string, std::pair<size_t, std::string>> private_names;
     std::map<std::string, std::vector<std::optional<std::string>>> callback_params;
+    std::map<std::string, std::vector<size_t>> const_owners;
+
+    // A bare name that two modules export as a `pub const` and this file does
+    // not bind itself has no one meaning here.
+    void check_const(const std::string &name, size_t cur) {
+        auto it = const_owners.find(name);
+        if (it == const_owners.end() || it->second.size() < 2) return;
+        for (const auto &sp : set.files[cur].body) {
+            const std::string *own = top_binding(*sp);
+            if (own && *own == name) return;
+        }
+        throw ModuleError("ambiguous unqualified name `" + name + "`: a `pub const` of both " +
+                          set.files[it->second[0]].path + " and " +
+                          set.files[it->second[1]].path);
+    }
 
     std::string mangle(size_t cur, const std::string &name) {
         const SourceFile &f = set.files[cur];
@@ -555,9 +592,11 @@ struct Mangler {
             for (auto &k : e->kids) k = walk_expr(std::move(k), cur);
             const std::string original = e->a;
             e->a = resolve_call(e->a, cur);
+            if (e->kids.empty() && e->a == original) check_const(original, cur);
             resolve_callback_args(e->kids, original, e->a, cur);
             return e;
         }
+        if (e->k == EK::Var) check_const(e->a, cur);
         if (e->k == EK::Field && !e->kids.empty()) {
             auto path = name_path(e->kids[0].get());
             if (path && !set.files[cur].functions.count(*path)) {
@@ -836,6 +875,7 @@ struct Mangler {
             check_interface(i, arity);
         }
         for (size_t i = 0; i < set.files.size(); i++) resolve_module(i, {});
+        const_owners = pub_const_owners(set);
         for (size_t i = 0; i < set.files.size(); i++) {
             for (auto &sp : set.files[i].body) transform_top(*sp, i);
         }
@@ -998,17 +1038,17 @@ void flatten(ModuleSet &set, bool prune_imports) {
             if (s->els) stmt(s->els.get());
         }
     };
-    // A top-level `let` or `const` of an imported module is private to it: the
-    // checker refuses another file that names one. In the flat program all of
-    // them would be one namespace, so each takes its module as a suffix. A
-    // `pub const` keeps its name, which is how other files reach it, and a
-    // top-level binding of the root that has the same name steps aside with a
-    // suffix no module has. Every use of the name in the file is renamed, a
-    // local that shadows it included, which keeps what each one refers to. A
-    // call is renamed as well, since a bare uppercase name parses as one and a
-    // closure is called by its binding, but not the call of a builtin, which
-    // wins over a binding of its name. The suffix leaves the first letter
-    // alone: the emitter tells that uppercase name by it.
+    // A top-level `let` or `const` of an imported module is the module's own:
+    // the checker refuses another file that names one, unless it is a
+    // `pub const`. In the flat program all of them would be one namespace, so
+    // each takes its module as a suffix, and a file that reads another
+    // module's `pub const` reads it under that name. Every use of the name in
+    // the file is renamed, a local that shadows it included, which keeps what
+    // each one refers to. A call is renamed as well, since a bare uppercase
+    // name parses as one and a closure is called by its binding, but not the
+    // call of a builtin, which wins over a binding of its name. The suffix
+    // leaves the first letter alone: the emitter tells that uppercase name by
+    // it.
     struct Rebind {
         std::map<std::string, std::string> to;
 
@@ -1045,12 +1085,7 @@ void flatten(ModuleSet &set, bool prune_imports) {
             if (s.els) stmt(*s.els);
         }
     };
-    std::set<std::string> pub_consts;
-    for (size_t i = 1; i < set.files.size(); i++) {
-        for (const auto &sp : set.files[i].body) {
-            if (sp->k == SK::Pub && inner(*sp)->konst) pub_consts.insert(inner(*sp)->a);
-        }
-    }
+    const std::map<std::string, std::vector<size_t>> pub_consts = pub_const_owners(set);
     std::set<std::string> expanded;
     std::vector<StmtP> flat;
     // A module's statements land where its `import` sits in the importer, not
@@ -1061,7 +1096,7 @@ void flatten(ModuleSet &set, bool prune_imports) {
         std::vector<StmtP> &out;
         bool do_prune;
         const std::set<std::string> &live_fns;
-        const std::set<std::string> &pub_consts;
+        const std::map<std::string, std::vector<size_t>> &pub_consts;
 
         void go(size_t idx) {
             const std::string &path = set.files[idx].path;
@@ -1070,12 +1105,18 @@ void flatten(ModuleSet &set, bool prune_imports) {
             Tag tag{set, path};
             Rebind own;
             const std::optional<std::string> &ns = set.files[idx].ns;
+            std::set<std::string> mine;
             for (const auto &sp : set.files[idx].body) {
-                const Stmt *s = ns ? sp.get() : inner(*sp);
-                if ((s->k != SK::Let && s->k != SK::LetTmp) || s->a == "_" || s->a[0] == '@')
-                    continue;
-                if (ns) own.to[s->a] = s->a + "__" + *ns;
-                else if (pub_consts.count(s->a)) own.to[s->a] = s->a + "__";
+                if (const std::string *nm = top_binding(*sp)) mine.insert(*nm);
+            }
+            // With two owners the name is not read here: `mangle_modules`
+            // refused the file otherwise.
+            for (const auto &[nm, owners] : pub_consts) {
+                if (owners.size() == 1 && !mine.count(nm))
+                    own.to[nm] = nm + "__" + *set.files[owners[0]].ns;
+            }
+            if (ns) {
+                for (const std::string &nm : mine) own.to[nm] = nm + "__" + *ns;
             }
             for (auto &sp : set.files[idx].body) {
                 if (sp->k == SK::Import) {

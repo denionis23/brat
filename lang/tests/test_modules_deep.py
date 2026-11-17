@@ -148,6 +148,21 @@ def main():
                "  print(seen, STEP, WIDTH, lo, widen)\n  return 0\n}\n"),
          "['left', 5]\n[['right', 19], 2, 7]\napp 100 50 0 wide\n")
 
+    # two modules may export a `pub const` of one name, and each reads its own;
+    # a file that reads the bare name has two to choose from and is refused
+    write("consts/one.brat", "pub const WIDTH = 1\npub fn one() { return WIDTH }\n")
+    write("consts/two.brat", "pub const WIDTH = 2\npub fn two() { return WIDTH }\n")
+    expect_output(write("consts/app.brat",
+               "import one\nimport two\n"
+               "fn main() -> i64 {\n  print(one.one(), two.two())\n  return 0\n}\n"),
+         "1 2\n")
+    both = write("consts/both/app.brat",
+                 "import one\nimport two\nfn main() -> i64 {\n  print(WIDTH)\n  return 0\n}\n")
+    write("consts/both/one.brat", "pub const WIDTH = 1\n")
+    write("consts/both/two.brat", "pub const WIDTH = 2\n")
+    refused(both, "ambiguous unqualified name `WIDTH`")
+    check_cxx_agrees(both, "ambiguous unqualified name `WIDTH`")
+
     # an interface decides what is exported, and a re-export of an interface-exported
     # function is public even though the function is not `pub`
     write("iface/lib/thing.brat", "fn hidden() -> i64 { return 42 }\n")
