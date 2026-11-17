@@ -249,12 +249,28 @@ std::set<std::string> exported_fn_names(const SourceFile &sf) {
 }
 
 // The checkers work on the mangled program, where `area` of module `geo.shape`
-// is `geo__shape__area`. A diagnostic spells it the way the source does.
-static void spell_source_names(const std::vector<SourceFile> &files, std::string &msg) {
+// is `geo__shape__area`. A diagnostic about file `self` spells a function the
+// way the source does, and a private type or a renamed local of that file by
+// the name the file gave it.
+static void spell_source_names(const std::vector<SourceFile> &files, size_t self,
+                               std::string &msg) {
     if (msg.find("__") == std::string::npos) return;
     auto is_word = [](char c) {
         return std::isalnum(static_cast<unsigned char>(c)) || c == '_';
     };
+    auto respell = [&](const std::string &mangled, const std::string &shown) {
+        for (size_t at = msg.find(mangled); at != std::string::npos; at = msg.find(mangled, at)) {
+            const size_t end = at + mangled.size();
+            if ((at > 0 && is_word(msg[at - 1])) || (end < msg.size() && is_word(msg[end]))) {
+                at = end;
+                continue;
+            }
+            msg.replace(at, mangled.size(), shown);
+            at += shown.size();
+        }
+    };
+    for (const auto &[mangled, original] : files[self].locals) respell(mangled, original);
+    for (const auto &[original, mangled] : files[self].types) respell(mangled, original);
     for (const SourceFile &f : files) {
         if (!f.ns) continue;
         std::string mod;
@@ -266,22 +282,9 @@ static void spell_source_names(const std::vector<SourceFile> &files, std::string
                 mod.push_back((*f.ns)[k]);
             }
         }
-        auto respell = [&](const std::string &mangled, const std::string &shown) {
-            for (size_t at = msg.find(mangled); at != std::string::npos; at = msg.find(mangled, at)) {
-                const size_t end = at + mangled.size();
-                if ((at > 0 && is_word(msg[at - 1])) || (end < msg.size() && is_word(msg[end]))) {
-                    at = end;
-                    continue;
-                }
-                msg.replace(at, mangled.size(), shown);
-                at += shown.size();
-            }
-        };
         for (const auto &[original, mangled] : f.functions) {
             if (mangled == *f.ns + "__" + original) respell(mangled, mod + "." + original);
         }
-        // A private type is only ever named in its own file, by its bare name.
-        for (const auto &[original, mangled] : f.types) respell(mangled, original);
     }
 }
 
@@ -311,8 +314,8 @@ BorrowOut check_sibling_borrows(const std::vector<SourceFile> &files, std::size_
                                  extra_sfields, extra_frets);
     for (std::vector<BorrowDiag> *diags : {&out.errs, &out.warns}) {
         for (BorrowDiag &d : *diags) {
-            spell_source_names(files, d.msg);
-            if (d.note) spell_source_names(files, d.note->msg);
+            spell_source_names(files, i, d.msg);
+            if (d.note) spell_source_names(files, i, d.note->msg);
         }
     }
     return out;
@@ -328,7 +331,7 @@ std::vector<TypeErr> check_sibling_types(const std::vector<SourceFile> &files, s
         collect_sigs(files[j].body, merged);
     }
     std::vector<TypeErr> errs = type_check(files[i].body, merged, merged_consts, merged_structs);
-    for (TypeErr &e : errs) spell_source_names(files, e.msg);
+    for (TypeErr &e : errs) spell_source_names(files, i, e.msg);
     return errs;
 }
 

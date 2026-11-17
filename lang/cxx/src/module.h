@@ -36,6 +36,9 @@ struct SourceFile {
     // A struct, enum or trait of a module that is not exported is the module's
     // own, and carries the module in its name: original -> mangled.
     std::map<std::string, std::string> types;
+    // A local that has the name of a function is renamed, so that a call by
+    // that name reaches the local: mangled -> original, for diagnostics.
+    std::map<std::string, std::string> locals;
     // A re-export remembers where it came from, so a name two modules claim is a
     // diagnostic instead of whichever statement ran last.
     std::map<std::string, std::pair<std::string, std::string>> reexports;

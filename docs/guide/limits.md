@@ -169,6 +169,9 @@ fn main() -> i64 {
 12
 ```
 
+A local or a parameter with the name of a function shadows it, in a call as
+anywhere else: after `let pick = fn(n) { ... }`, `pick(0)` calls the closure.
+
 A `fn` declared inside another function is a name of that function only, and
 it does not capture: its body sees its own parameters and the top-level names.
 Reading a local of the enclosing function is a compile error. Bind a closure

@@ -635,15 +635,27 @@ struct Mangler {
                           set.files[it->second[1]].path);
     }
 
-    // The variables in scope where the walk stands: one set per open block,
-    // under the top-level bindings of the file, which every function sees.
-    std::vector<std::set<std::string>> scopes;
+    // The variables in scope where the walk stands, one map per open block,
+    // under the top-level bindings of the file, which every function sees. A
+    // local with the name of a function shadows it: the checkers already read
+    // it that way, and the emitter resolves a call by the function's name, so
+    // such a local is renamed here, at its binding and at every use in scope.
+    // The map holds the name each local has in the mangled program.
+    std::vector<std::map<std::string, std::string>> scopes;
     std::map<size_t, std::set<std::string>> top_names;
+    std::map<size_t, std::set<std::string>> taken;
+    size_t walking = 0;
+
+    const std::string *local(const std::string &name) const {
+        for (size_t i = scopes.size(); i-- > 0;) {
+            auto it = scopes[i].find(name);
+            if (it != scopes[i].end()) return &it->second;
+        }
+        return nullptr;
+    }
 
     bool binds(size_t cur, const std::string &name) {
-        for (const auto &sc : scopes) {
-            if (sc.count(name)) return true;
-        }
+        if (local(name)) return true;
         auto [it, fresh] = top_names.try_emplace(cur);
         if (fresh) {
             for (const auto &sp : set.files[cur].body) {
@@ -653,11 +665,56 @@ struct Mangler {
         return it->second.count(name) > 0;
     }
 
+    void names_in(const FnDecl &f, std::set<std::string> &out) {
+        for (const auto &p : f.params) {
+            out.insert(p.name);
+            names_in(p.def.get(), out);
+        }
+        for (const auto &st : f.body) names_in(*st, out);
+    }
+    void names_in(const Expr *e, std::set<std::string> &out) {
+        if (!e) return;
+        if (e->k == EK::Var || e->k == EK::Call || e->k == EK::ParFor) out.insert(e->a);
+        for (const auto &k : e->kids) names_in(k.get(), out);
+        if (e->fn) names_in(*e->fn, out);
+    }
+    void names_in(const Stmt &s, std::set<std::string> &out) {
+        out.insert(s.a);
+        if (s.opt1) out.insert(*s.opt1);
+        for (const Expr *e : {s.e1.get(), s.e2.get(), s.e3.get()}) names_in(e, out);
+        for (const auto &f : s.fns) {
+            if (f.name) out.insert(*f.name);
+            names_in(f, out);
+        }
+        for (const auto &st : s.body) names_in(*st, out);
+        for (const auto &st : s.body2) names_in(*st, out);
+        if (s.els) names_in(*s.els, out);
+    }
+
+    // Puts `name` in the innermost scope. When it is the name of a function
+    // this file can call, the binding gets a name nothing in the file uses.
+    void bind(std::string &name) {
+        SourceFile &f = set.files[walking];
+        std::string to = name;
+        if (f.functions.count(name) || public_names.count(name)) {
+            auto [it, fresh] = taken.try_emplace(walking);
+            if (fresh) {
+                for (const auto &sp : f.body) names_in(*sp, it->second);
+            }
+            for (int n = 1; it->second.count(to) || public_names.count(to); n++)
+                to = name + "__" + std::to_string(n);
+            f.locals[to] = name;
+        }
+        scopes.back()[name] = to;
+        name = to;
+    }
+
     struct Scope {
-        std::vector<std::set<std::string>> &scopes;
-        explicit Scope(std::vector<std::set<std::string>> &s) : scopes(s) { scopes.emplace_back(); }
+        std::vector<std::map<std::string, std::string>> &scopes;
+        explicit Scope(std::vector<std::map<std::string, std::string>> &s) : scopes(s) {
+            scopes.emplace_back();
+        }
         ~Scope() { scopes.pop_back(); }
-        void bind(const std::string &name) { scopes.back().insert(name); }
     };
 
     // The one module of `cur`'s imports that a qualifier names.
@@ -864,6 +921,10 @@ struct Mangler {
             const std::string original = e->a;
             if (original == "__stag_is" && e->kids.size() == 2 && e->kids[1]->k == EK::Str)
                 refuse_private_type(e->kids[1]->a, cur);
+            if (const std::string *mine = local(original)) {
+                e->a = *mine;
+                return e;
+            }
             e->a = resolve_call(e->a, cur);
             if (e->kids.empty() && e->a == original) check_const(original, cur);
             resolve_callback_args(e->kids, original, e->a, cur);
@@ -871,6 +932,10 @@ struct Mangler {
         }
         if (e->k == EK::StructLit) refuse_private_type(e->a, cur);
         if (e->k == EK::Var) {
+            if (const std::string *mine = local(e->a)) {
+                e->a = *mine;
+                return e;
+            }
             check_const(e->a, cur);
             resolve_fn_value(*e, cur);
             return e;
@@ -909,6 +974,7 @@ struct Mangler {
         }
         for (auto &k : e->kids) k = walk_expr(std::move(k), cur);
         if ((e->k == EK::Closure || e->k == EK::ParFor) && e->fn) walk_fn(*e->fn, cur);
+        if (e->k == EK::ParFor && e->fn && !e->fn->params.empty()) e->a = e->fn->params[0].name;
         if (e->k == EK::ParFor && !e->b.empty()) {
             e->b = resolve_call(e->b, cur);
         }
@@ -924,7 +990,7 @@ struct Mangler {
         Scope params(scopes);
         for (auto &p : f.params) {
             if (p.def) p.def = walk_expr(std::move(p.def), cur);
-            params.bind(p.name);
+            bind(p.name);
         }
         walk_body(f.body, cur);
     }
@@ -939,19 +1005,32 @@ struct Mangler {
         for (auto &p : s.ext.params) {
             if (p.def) p.def = walk_expr(std::move(p.def), cur);
         }
-        for (auto &f : s.fns) walk_fn(f, cur);
+        if (s.k == SK::Fn || s.k == SK::ExportFn || s.k == SK::Impl) {
+            // A named fn sees its parameters and the top level, not the locals
+            // of a function it is declared in.
+            std::vector<std::map<std::string, std::string>> outer;
+            outer.swap(scopes);
+            for (auto &f : s.fns) walk_fn(f, cur);
+            outer.swap(scopes);
+        } else {
+            for (auto &f : s.fns) walk_fn(f, cur);
+        }
+        if (s.k == SK::Set) {
+            if (const std::string *mine = local(s.a)) s.a = *mine;
+        }
         // A `let` is in scope after its initializer; a loop variable and a
         // `catch` name are in scope in the blocks of their statement.
-        if ((s.k == SK::Let || s.k == SK::LetTmp) && !scopes.empty()) scopes.back().insert(s.a);
+        if ((s.k == SK::Let || s.k == SK::LetTmp) && !scopes.empty()) bind(s.a);
         Scope own(scopes);
-        if (s.k == SK::ForRange || s.k == SK::ForIter) own.bind(s.a);
-        if (s.k == SK::Try && s.opt1) own.bind(*s.opt1);
+        if (s.k == SK::ForRange || s.k == SK::ForIter) bind(s.a);
+        if (s.k == SK::Try && s.opt1) bind(*s.opt1);
         walk_body(s.body, cur);
         walk_body(s.body2, cur);
         if (s.els) walk_stmt(*s.els, cur);
     }
 
     void transform_top(Stmt &s, size_t cur) {
+        walking = cur;
         walk_stmt(s, cur);
         Stmt *fn = nullptr;
         if (s.k == SK::Fn) fn = &s;

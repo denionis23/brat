@@ -125,7 +125,33 @@ def main():
                  "use of `geo.shape.area` as a value")
     print("modules qualified ok: source spelling in a diagnostic")
 
-    print("MODULES QUALIFIED ALL GREEN (16 asserts)")
+    # a local with the name of a function shadows it in a call too: the
+    # checkers read it that way and the emitter called the function, printing 1
+    shadow = write("shadow/main.brat",
+                   "fn pick(n) { return 1 }\n"
+                   "fn with_param(pick) {\n  return pick(0)\n}\n"
+                   "fn nested(pick) {\n  fn inner(n) { return pick(n) + 10 }\n"
+                   "  let f = fn(n) { return pick(n) + 100 }\n  return [inner(0), f(0)]\n}\n"
+                   "fn main() -> i64 {\n  print(with_param(fn(n) { return 2 }), pick(0))\n"
+                   "  print(nested(fn(n) { return 3 }))\n"
+                   "  let pick = fn(n) { return 4 }\n  print(pick(0))\n"
+                   "  return 0\n}\n")
+    expect_both(shadow, "shadow", b"2 1\n[11, 103]\n4\n")
+    write("shadow/lib.brat", "pub fn pick(n) { return 1 }\npub fn twice(n) { return pick(n) * 2 }\n")
+    imported = write("shadow/imported.brat",
+                     "import lib\nfn main() -> i64 {\n  print(pick(0), lib.twice(0))\n"
+                     "  let pick = fn(n) { return 5 }\n  print(pick(0), lib.pick(0))\n"
+                     "  return 0\n}\n")
+    expect_both(imported, "imported", b"1 2\n5 1\n")
+    # the name in a diagnostic is the one the source has
+    expect_error(write("shadow/diag.brat",
+                       "fn total(xs) { return len(xs) }\n"
+                       "fn main() -> i64 {\n  let total = total([1, 2])\n  total.push(3)\n"
+                       "  return 0\n}\n"),
+                 "`total`")
+    print("modules qualified ok: a local shadows a function of the same name")
+
+    print("MODULES QUALIFIED ALL GREEN (19 asserts)")
 
 
 if __name__ == "__main__":
