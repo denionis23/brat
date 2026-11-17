@@ -402,8 +402,10 @@ for opt in ("-O0", "-O2"):
          "-I", ENGINE, defer_fail_c, "-lm", "-lpthread", "-ldl", "-o", defer_fail_exe],
         check=True,
     )
+    # LeakSanitizer does not exist on macOS, where asking for it is an error.
+    leaks = "0" if sys.platform == "darwin" else "1"
     rd = subprocess.run([defer_fail_exe], capture_output=True, text=True, timeout=60,
-                        env=dict(os.environ, ASAN_OPTIONS="detect_leaks=1"))
+                        env=dict(os.environ, ASAN_OPTIONS="detect_leaks=" + leaks))
     assert rd.returncode == 0, f"defer_fail {opt} rc={rd.returncode}: {rd.stderr[-600:]}"
     assert rd.stdout == defer_fail_want, f"defer_fail {opt} got: {rd.stdout[:300]!r}"
 
