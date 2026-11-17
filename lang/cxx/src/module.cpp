@@ -493,18 +493,107 @@ struct Mangler {
     std::map<std::string, std::vector<std::optional<std::string>>> callback_params;
     std::map<std::string, std::vector<size_t>> const_owners;
 
-    // A bare name that two modules export as a `pub const` and this file does
-    // not bind itself has no one meaning here.
+    // A bare name that two modules export as a `pub const` and nothing in
+    // scope binds has no one meaning here.
     void check_const(const std::string &name, size_t cur) {
         auto it = const_owners.find(name);
-        if (it == const_owners.end() || it->second.size() < 2) return;
-        for (const auto &sp : set.files[cur].body) {
-            const std::string *own = top_binding(*sp);
-            if (own && *own == name) return;
-        }
+        if (it == const_owners.end() || it->second.size() < 2 || binds(cur, name)) return;
         throw ModuleError("ambiguous unqualified name `" + name + "`: a `pub const` of both " +
                           set.files[it->second[0]].path + " and " +
                           set.files[it->second[1]].path);
+    }
+
+    // The variables in scope where the walk stands: one set per open block,
+    // under the top-level bindings of the file, which every function sees.
+    std::vector<std::set<std::string>> scopes;
+    std::map<size_t, std::set<std::string>> top_names;
+
+    bool binds(size_t cur, const std::string &name) {
+        for (const auto &sc : scopes) {
+            if (sc.count(name)) return true;
+        }
+        auto [it, fresh] = top_names.try_emplace(cur);
+        if (fresh) {
+            for (const auto &sp : set.files[cur].body) {
+                if (const std::string *nm = top_binding(*sp)) it->second.insert(*nm);
+            }
+        }
+        return it->second.count(name) > 0;
+    }
+
+    struct Scope {
+        std::vector<std::set<std::string>> &scopes;
+        explicit Scope(std::vector<std::set<std::string>> &s) : scopes(s) { scopes.emplace_back(); }
+        ~Scope() { scopes.pop_back(); }
+        void bind(const std::string &name) { scopes.back().insert(name); }
+    };
+
+    // The one module of `cur`'s imports that a qualifier names.
+    std::optional<size_t> imported_module(const std::string &qualifier, size_t cur) {
+        std::vector<size_t> targets;
+        for (const auto &[imported, target] : set.files[cur].imports) {
+            bool match = qualifier == imported;
+            if (!match) {
+                size_t tail = imported.rfind('.');
+                match = qualifier == (tail == std::string::npos ? imported
+                                                               : imported.substr(tail + 1));
+            }
+            if (match && std::find(targets.begin(), targets.end(), target) == targets.end()) {
+                targets.push_back(target);
+            }
+        }
+        if (targets.size() != 1) return std::nullopt;
+        return targets[0];
+    }
+
+    // `mod.NAME` and `mod.f` in value position: an exported constant or a
+    // function of the module. The constant keeps its bare name for the checker
+    // and carries the module in `b`, which `flatten` folds into the name.
+    bool resolve_qualified_value(Expr &e, const std::string &qualifier, size_t cur) {
+        const std::string head = qualifier.substr(0, qualifier.find('.'));
+        if (binds(cur, head) || const_owners.count(head)) return false;
+        auto target = imported_module(qualifier, cur);
+        if (!target) return false;
+        const SourceFile &m = set.files[*target];
+        const std::string name = e.b;
+        for (const auto &sp : m.body) {
+            const std::string *nm = top_binding(*sp);
+            if (!nm || *nm != name) continue;
+            if (sp->k != SK::Pub || !inner(*sp)->konst) {
+                throw ModuleError("`" + name + "` is private in module `" + module_name(*target) +
+                                  "`: only a `pub const` is read from another file");
+            }
+            e.k = EK::Var;
+            e.a = name;
+            e.b = m.ns.value_or("");
+            e.kids.clear();
+            return true;
+        }
+        auto fn = m.functions.find(name);
+        if (fn == m.functions.end()) {
+            throw ModuleError("module `" + module_name(*target) + "` has no `" + name + "`");
+        }
+        if (!m.pub.count(name)) {
+            throw ModuleError("function `" + name + "` is private in module `" +
+                              module_name(*target) + "`");
+        }
+        e.k = EK::Var;
+        e.a = fn->second;
+        e.b.clear();
+        e.kids.clear();
+        return true;
+    }
+
+    // A bare name in value position that the file binds nowhere is a function:
+    // the file's own, or the one a module exports.
+    void resolve_fn_value(Expr &e, size_t cur) {
+        if (binds(cur, e.a) || const_owners.count(e.a)) return;
+        auto own = set.files[cur].functions.find(e.a);
+        if (own != set.files[cur].functions.end()) {
+            e.a = own->second;
+            return;
+        }
+        if (public_names.count(e.a)) e.a = resolve_call(e.a, cur);
     }
 
     std::string mangle(size_t cur, const std::string &name) {
@@ -575,20 +664,9 @@ struct Mangler {
         if (dot == std::string::npos) return std::nullopt;
         std::string qualifier = name.substr(0, dot);
         std::string ctor = name.substr(dot + 1);
-        std::vector<size_t> targets;
-        for (const auto &[imported, target] : set.files[cur].imports) {
-            bool match = qualifier == imported;
-            if (!match) {
-                size_t tail = imported.rfind('.');
-                match = qualifier == (tail == std::string::npos ? imported
-                                                               : imported.substr(tail + 1));
-            }
-            if (match && std::find(targets.begin(), targets.end(), target) == targets.end()) {
-                targets.push_back(target);
-            }
-        }
-        if (targets.size() != 1) return std::nullopt;
-        size_t target = targets[0];
+        auto found = imported_module(qualifier, cur);
+        if (!found) return std::nullopt;
+        size_t target = *found;
         auto cit = set.files[target].pub_ctors.find(ctor);
         if (cit != set.files[target].pub_ctors.end() && cit->second == 0) return ctor;
         if (target != cur && set.files[target].priv_ctors.count(ctor)) {
@@ -657,7 +735,11 @@ struct Mangler {
             resolve_callback_args(e->kids, original, e->a, cur);
             return e;
         }
-        if (e->k == EK::Var) check_const(e->a, cur);
+        if (e->k == EK::Var) {
+            check_const(e->a, cur);
+            resolve_fn_value(*e, cur);
+            return e;
+        }
         if (e->k == EK::Field && !e->kids.empty()) {
             auto path = name_path(e->kids[0].get());
             if (path && !set.files[cur].functions.count(*path)) {
@@ -669,6 +751,7 @@ struct Mangler {
                     e->kids.clear();
                     return e;
                 }
+                if (resolve_qualified_value(*e, *path, cur)) return e;
             }
         }
         if (e->k == EK::MCall) {
@@ -690,12 +773,7 @@ struct Mangler {
             }
         }
         for (auto &k : e->kids) k = walk_expr(std::move(k), cur);
-        if ((e->k == EK::Closure || e->k == EK::ParFor) && e->fn) {
-            for (auto &p : e->fn->params) {
-                if (p.def) p.def = walk_expr(std::move(p.def), cur);
-            }
-            walk_body(e->fn->body, cur);
-        }
+        if ((e->k == EK::Closure || e->k == EK::ParFor) && e->fn) walk_fn(*e->fn, cur);
         if (e->k == EK::ParFor && !e->b.empty()) {
             e->b = resolve_call(e->b, cur);
         }
@@ -703,7 +781,17 @@ struct Mangler {
     }
 
     void walk_body(std::vector<StmtP> &body, size_t cur) {
+        Scope block(scopes);
         for (auto &s : body) walk_stmt(*s, cur);
+    }
+
+    void walk_fn(FnDecl &f, size_t cur) {
+        Scope params(scopes);
+        for (auto &p : f.params) {
+            if (p.def) p.def = walk_expr(std::move(p.def), cur);
+            params.bind(p.name);
+        }
+        walk_body(f.body, cur);
     }
 
     void walk_stmt(Stmt &s, size_t cur) {
@@ -716,12 +804,13 @@ struct Mangler {
         for (auto &p : s.ext.params) {
             if (p.def) p.def = walk_expr(std::move(p.def), cur);
         }
-        for (auto &f : s.fns) {
-            for (auto &p : f.params) {
-                if (p.def) p.def = walk_expr(std::move(p.def), cur);
-            }
-            walk_body(f.body, cur);
-        }
+        for (auto &f : s.fns) walk_fn(f, cur);
+        // A `let` is in scope after its initializer; a loop variable and a
+        // `catch` name are in scope in the blocks of their statement.
+        if ((s.k == SK::Let || s.k == SK::LetTmp) && !scopes.empty()) scopes.back().insert(s.a);
+        Scope own(scopes);
+        if (s.k == SK::ForRange || s.k == SK::ForIter) own.bind(s.a);
+        if (s.k == SK::Try && s.opt1) own.bind(*s.opt1);
         walk_body(s.body, cur);
         walk_body(s.body2, cur);
         if (s.els) walk_stmt(*s.els, cur);
@@ -1128,9 +1217,13 @@ void flatten(ModuleSet &set, bool prune_imports) {
         }
         void expr(Expr *e) const {
             if (!e) return;
-            if (e->k == EK::Var || e->k == EK::ParFor ||
-                (e->k == EK::Call && !is_builtin_call(e->a)))
+            if (e->k == EK::Var && !e->b.empty()) {
+                e->a += "__" + e->b;
+                e->b.clear();
+            } else if (e->k == EK::Var || e->k == EK::ParFor ||
+                       (e->k == EK::Call && !is_builtin_call(e->a))) {
                 name(e->a);
+            }
             for (auto &k : e->kids) expr(k.get());
             if (e->fn) fn(*e->fn);
         }
@@ -1197,7 +1290,7 @@ void flatten(ModuleSet &set, bool prune_imports) {
                         if (!live_fns.count(*nm)) continue;
                     }
                 }
-                if (!own.to.empty()) own.stmt(*sp);
+                own.stmt(*sp);
                 tag.stmt(sp.get());
                 out.push_back(std::move(sp));
             }

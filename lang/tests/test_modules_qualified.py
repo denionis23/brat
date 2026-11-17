@@ -79,7 +79,46 @@ def main():
     expect_both(distinct, "distinct", b"A\nB\n")
     print("modules qualified ok: qualification disambiguates at -O0 and -O2")
 
-    print("MODULES QUALIFIED ALL GREEN (8 asserts)")
+    # `mod.NAME` reads an exported constant, also where the file has a `NAME`
+    # of its own or two modules export one; what is not `pub const` stays out
+    write("values/cfg.brat",
+          "pub const LIMIT = 20\nconst STEP = 2\nlet names = [\"cfg\"]\n"
+          "pub fn limit() -> i64 { return LIMIT * STEP + len(names) }\n")
+    write("values/alt.brat", "pub const LIMIT = 5\n")
+    consts = write("values/consts.brat",
+                   "import cfg\nimport alt\nconst LIMIT = 7\nfn main() -> i64 {\n"
+                   "  print(LIMIT, cfg.LIMIT, alt.LIMIT, cfg.LIMIT + alt.LIMIT, cfg.limit())\n"
+                   "  return 0\n}\n")
+    expect_both(consts, "consts", b"7 20 5 25 41\n")
+    expect_error(write("values/private.brat",
+                       "import cfg\nfn main() -> i64 {\n  print(cfg.names)\n  return 0\n}\n"),
+                 "`names` is private in module `cfg`")
+    expect_error(write("values/missing.brat",
+                       "import cfg\nfn main() -> i64 {\n  print(cfg.NOPE)\n  return 0\n}\n"),
+                 "module `cfg` has no `NOPE`")
+    print("modules qualified ok: qualified constant, private binding and missing name")
+
+    # an imported function is a callback under its qualified and its bare
+    # name, a module passes its own, and a local of the same name is a local
+    write("values/geo/shape.brat",
+          "pub fn area(r: i64) -> i64 { return 3 * r * r }\n"
+          "fn twice(x: i64) -> i64 { return x * 2 }\n"
+          "pub fn doubled(v) { return v.map(twice) }\n")
+    callbacks = write("values/callbacks.brat",
+                      "import geo.shape\nstruct Box { area: i64 }\n"
+                      "fn show(shape: Box) -> i64 { return shape.area }\n"
+                      "fn main() -> i64 {\n"
+                      "  print([1, 2].map(shape.area), [1, 2].map(geo.shape.area), [1, 2].map(area))\n"
+                      "  print(shape.doubled([1, 2]), show(Box { area: 9 }))\n"
+                      "  return 0\n}\n")
+    expect_both(callbacks, "callbacks", b"[3, 12] [3, 12] [3, 12]\n[2, 4] 9\n")
+    expect_error(write("values/private_fn.brat",
+                       "import geo.shape\nfn main() -> i64 {\n"
+                       "  print([1].map(shape.twice))\n  return 0\n}\n"),
+                 "function `twice` is private in module `geo.shape`")
+    print("modules qualified ok: imported function as a callback")
+
+    print("MODULES QUALIFIED ALL GREEN (15 asserts)")
 
 
 if __name__ == "__main__":

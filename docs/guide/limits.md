@@ -127,7 +127,8 @@ fn main() -> i64 {
 
 A top-level `fn` name can be passed directly to `map`, `filter`, `fold`, `any`,
 `all`, `find` and `sort_by` (or as `"fn_name"` to a C callback parameter), but
-cannot be stored in a variable. Use a `fn(x) { ... }` closure when you need a
+cannot be stored in a variable. An imported `pub fn` is passed the same way,
+as `area` or as `shape.area`. Use a `fn(x) { ... }` closure when you need a
 stored function value:
 
 ```brat check

@@ -24,9 +24,9 @@ fn main() -> i64 {
 
 A top-level `let` or `const` belongs to its file as well: two modules can each
 keep a `cache`, and another file cannot name it. `pub const LIMIT = 10` is the
-binding a module exports, and other files read it as `LIMIT`. When two modules
-export a `LIMIT`, a file that reads the bare name is refused as ambiguous
-unless it declares its own.
+binding a module exports, and other files read it as `LIMIT` or `cfg.LIMIT`.
+When two modules export a `LIMIT`, the bare name is refused as ambiguous where
+nothing in scope is called `LIMIT`; the qualified name always works.
 
 `import math.vec2` looks in three places, in order:
 
