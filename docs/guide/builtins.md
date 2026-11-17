@@ -118,7 +118,7 @@ on maps.
 |---|---|
 | `x.unwrap()`, `x.unwrap_or(fallback)` | as the functions of the same name |
 | `x.is_ok()`, `x.is_err()`, `x.is_some()`, `x.is_none()` | `bool` |
-| `ch.send(x)` | puts `x` on the channel, waiting while it is full |
+| `ch.send(x)` | puts `x` on the channel, waiting while it is full; raises `send on closed channel` after `close` |
 | `ch.recv()` | the next value, or `None` once the channel is closed and empty |
 | `ch.close()` | no more values will be sent |
 

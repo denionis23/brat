@@ -157,9 +157,11 @@ fn main() -> i64 {
 CASES["send_after_close"] = '''fn main() -> i64 {
   let ch = chan(2)
   ch.close()
-  match ch.send("late") {
-    Ok(_) => { print("sent") },
-    Err(e) => { print(e) }
+  try {
+    ch.send("late")
+    print("sent")
+  } catch e {
+    print(e)
   }
   print(ch.recv())
   return 0
@@ -524,6 +526,23 @@ seen = subprocess.run(_cxx.cli_args("run", "-O0", path), capture_output=True, te
 assert seen.returncode == 1, "unhandled rc=%d %r" % (seen.returncode, seen.stdout + seen.stderr)
 assert seen.stdout == "", "unhandled stdout=%r" % seen.stdout
 assert "unhandled: Err('div by zero')" in seen.stderr, "unhandled stderr=%r" % seen.stderr
+
+# A send on a closed channel is an error like any other. As a bare statement it
+# used to hand back an `Err` nobody looked at, and the program went on.
+path, _ = build('''fn main() -> i64 {
+  let ch = chan(2)
+  ch.close()
+  ch.send(1)
+  print("after")
+  return 0
+}
+''', "send_closed_unhandled")
+seen = subprocess.run(_cxx.cli_args("run", "-O0", path), capture_output=True, text=True,
+                      timeout=120)
+assert seen.returncode == 1, "send closed rc=%d %r" % (seen.returncode, seen.stdout + seen.stderr)
+assert seen.stdout == "", "send closed stdout=%r" % seen.stdout
+assert "unhandled: Err('send on closed channel')" in seen.stderr, \
+    "send closed stderr=%r" % seen.stderr
 
 # A program that sends and drains must leave nothing behind.
 path, csrc = build(CASES["pipeline"], "pipeline_asan")

@@ -1423,7 +1423,7 @@ BFN Val vchan_new(Val cap) {
 
 BFN Val vchan_send(Val h, Val v) {
     VChan *c = _vch_acquire(h);
-    if (!c) return _verr_c("send on closed channel");
+    if (!c) { vraise("send on closed channel"); return vunwind; }
     _vch_lk(c);
     while (c->len == c->cap && !c->closed) {
         if (vtask_lost(c)) { _vch_ul(c); _vch_put(c); return vunwind; }
@@ -1431,7 +1431,12 @@ BFN Val vchan_send(Val h, Val v) {
         _vch_wait_snd(c);
         bpool_wait_end();
     }
-    if (c->closed) { _vch_ul(c); _vch_put(c); return _verr_c("send on closed channel"); }
+    if (c->closed) {
+        _vch_ul(c);
+        _vch_put(c);
+        vraise("send on closed channel");
+        return vunwind;
+    }
     Val stored = barena_depth ? vown(v) : vrc_inc(v);
     if (barena_depth && _verr_pending) { _vch_ul(c); _vch_put(c); return vunwind; }
     c->buf[(c->head + c->len) % c->cap] = stored;

@@ -318,10 +318,15 @@ fn audit_runtime_regressions() -> i64 {{
   let ch2 = chan(2)
   ch2.send(777)
   let stale_rx = ch1.recv()
-  let stale_tx = ch1.send(999)
+  let mut stale_tx = ""
+  try {{
+    ch1.send(999)
+  }} catch e {{
+    stale_tx = str(e)
+  }}
   let ok_rx = ch2.recv()
   ch2.close()
-  assert(is_none(stale_rx) && is_err(stale_tx) && ok_rx == 777)
+  assert(is_none(stale_rx) && stale_tx == "send on closed channel" && ok_rx == 777)
   return 0
 }}
 
