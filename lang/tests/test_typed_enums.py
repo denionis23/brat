@@ -537,6 +537,33 @@ fn main() -> i64 {
 r = run_brat("check", mod_priv)
 check(r.returncode != 0, f"private enum leaked across module: {r.stdout} {r.stderr}")
 
+# A refusal raised from inside the body of a `pub fn`. The mangler sets the
+# open scopes aside for a named fn; when the body was refused it did not put
+# them back, and the scopes around it were then closed on an empty stack. The
+# sanitizer-built compiler in CI stopped with a heap overflow where this
+# message belongs.
+write_file("amb/one.brat", "pub const WIDTH = 1\n")
+write_file("amb/two.brat", "pub const WIDTH = 2\n")
+write_file("amb/three.brat", """import one
+import two
+pub fn width() -> i64 {
+  if true {
+    return WIDTH
+  }
+  return 0
+}
+""")
+mod_amb = write_file("amb/app.brat", """import three
+fn main() -> i64 {
+  print(three.width())
+  return 0
+}
+""")
+r = run_brat("check", mod_amb)
+check(r.returncode != 0 and "ambiguous unqualified name `WIDTH`" in (r.stdout + r.stderr)
+      and "Sanitizer" not in (r.stdout + r.stderr),
+      f"refusal inside a fn body: {r.stdout} {r.stderr[-600:]}")
+
 # Mismatched variant type in .bri is rejected.
 write_file("badbri/m.brat", """pub enum Token { Num(i64), Word(str) }
 """)

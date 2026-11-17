@@ -709,12 +709,20 @@ struct Mangler {
         name = to;
     }
 
+    using Scopes = std::vector<std::map<std::string, std::string>>;
     struct Scope {
-        std::vector<std::map<std::string, std::string>> &scopes;
-        explicit Scope(std::vector<std::map<std::string, std::string>> &s) : scopes(s) {
-            scopes.emplace_back();
-        }
+        Scopes &scopes;
+        explicit Scope(Scopes &s) : scopes(s) { scopes.emplace_back(); }
         ~Scope() { scopes.pop_back(); }
+    };
+    // Sets the open scopes aside for the body of a named fn and puts them back
+    // on the way out, also when the body is refused with an exception: the
+    // scopes opened around it are still to be closed then.
+    struct NoScopes {
+        Scopes &scopes;
+        Scopes outer;
+        explicit NoScopes(Scopes &s) : scopes(s) { outer.swap(scopes); }
+        ~NoScopes() { outer.swap(scopes); }
     };
 
     // The one module of `cur`'s imports that a qualifier names.
@@ -1008,10 +1016,8 @@ struct Mangler {
         if (s.k == SK::Fn || s.k == SK::ExportFn || s.k == SK::Impl) {
             // A named fn sees its parameters and the top level, not the locals
             // of a function it is declared in.
-            std::vector<std::map<std::string, std::string>> outer;
-            outer.swap(scopes);
+            NoScopes top(scopes);
             for (auto &f : s.fns) walk_fn(f, cur);
-            outer.swap(scopes);
         } else {
             for (auto &f : s.fns) walk_fn(f, cur);
         }
