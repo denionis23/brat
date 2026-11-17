@@ -1133,8 +1133,11 @@ BFN void vdfreset(bint base) {
         Vec *f = vdfr[--vdfsp];
         if (!f) continue;
         for (bint i = f->len - 1; i >= 0; --i) {
-            /* Run the defer even while an error is unwinding, then restore it
-             * unless the defer itself raised an uncaught error. */
+            /* Run the defer even while an error is unwinding, then restore it.
+             * The first error is the one the caller hears about: a defer that
+             * fails while one is on its way out loses its own. A defer that
+             * fails with none pending starts one, and the defers registered
+             * before it still run. */
             int sp = _verr_pending, se = _verr_exc;
             const BLoc *sline = _verr_at;
             Val sv_unw = sp ? vunwind : vnil();
@@ -1147,8 +1150,8 @@ BFN void vdfreset(bint base) {
             Val r = vcall_any(f->items[i], &sv.vec);
             vrc_dec(r);
             if (_verr_pending) {
-                if (sp) vrelease(sv_unw);
-                break;
+                if (!sp) continue;
+                verr_catch_discard();
             }
             _verr_pending = sp;
             _verr_exc = se;

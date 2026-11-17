@@ -345,4 +345,66 @@ rm = subprocess.run([moved_exe], capture_output=True, text=True, timeout=30)
 assert rm.returncode == 0, f"moved_ffi rc={rm.returncode}: {rm.stderr}"
 assert rm.stdout == "use of moved value\nuse of moved value\n", f"got: {rm.stdout!r}"
 
+# A defer that fails while an error is on its way out. The later error used to
+# replace the first, the defers registered before the failing one were skipped,
+# and the heap was left corrupt ("malloc_consolidate(): unaligned fastbin
+# chunk"). The first error is the one the caller sees, every defer runs, and
+# 300 rounds leave nothing behind under ASan.
+defer_fail_src = (
+    "fn bad_cleanup() {\n"
+    "  let v = [\"heap-allocated-long-string-for-the-vector\"]\n"
+    "  print(v[7])\n"
+    "}\n"
+    "fn runtime_error() {\n"
+    "  defer print(\"outer defer ran\")\n"
+    "  defer bad_cleanup()\n"
+    "  let m = {\"a\": \"heap-allocated-long-string-in-the-map\"}\n"
+    "  return m[\"missing\"] + \"!\"\n"
+    "}\n"
+    "fn raised() {\n"
+    "  defer bad_cleanup()\n"
+    "  raise(\"the real error\")\n"
+    "}\n"
+    "fn only_defer() {\n"
+    "  defer print(\"still ran\")\n"
+    "  defer bad_cleanup()\n"
+    "  return \"value-long-string-heap-allocated\"\n"
+    "}\n"
+    "fn main() -> i64 {\n"
+    "  try {\n    print(runtime_error())\n  } catch e {\n    print(\"caught:\", e)\n  }\n"
+    "  try {\n    let x = raised()?\n    print(x)\n  } catch e {\n    print(\"caught:\", e)\n  }\n"
+    "  try {\n    print(only_defer())\n  } catch e {\n    print(\"caught:\", e)\n  }\n"
+    "  let mut seen = 0\n"
+    "  for i in 0..300 {\n"
+    "    try {\n      let s = runtime_error()\n    } catch e {\n      seen += len(e)\n    }\n"
+    "    try {\n      let t = raised()?\n    } catch e {\n      seen += len(e)\n    }\n"
+    "  }\n"
+    "  print(seen)\n"
+    "  return 0\n"
+    "}\n"
+)
+defer_fail_want = (
+    "outer defer ran\ncaught: no key missing\ncaught: the real error\n"
+    "still ran\ncaught: index out of range\n" + "outer defer ran\n" * 300 + "8400\n"
+)
+defer_fail_brat = os.path.join(TMP, "defer_fail.brat")
+defer_fail_c = os.path.join(TMP, "defer_fail.c")
+defer_fail_exe = os.path.join(TMP, "defer_fail.exe")
+with open(defer_fail_brat, "w", encoding="utf-8") as f:
+    f.write(defer_fail_src)
+for opt in ("-O0", "-O2"):
+    emit_d = subprocess.run([CXX, "emit-c", opt, defer_fail_brat],
+                            capture_output=True, text=True, check=True)
+    with open(defer_fail_c, "w", encoding="utf-8") as f:
+        f.write(emit_d.stdout)
+    subprocess.run(
+        [cc, "-std=gnu11", "-O1", "-g", "-fsanitize=address", "-fno-omit-frame-pointer",
+         "-I", ENGINE, defer_fail_c, "-lm", "-lpthread", "-ldl", "-o", defer_fail_exe],
+        check=True,
+    )
+    rd = subprocess.run([defer_fail_exe], capture_output=True, text=True, timeout=60,
+                        env=dict(os.environ, ASAN_OPTIONS="detect_leaks=1"))
+    assert rd.returncode == 0, f"defer_fail {opt} rc={rd.returncode}: {rd.stderr[-600:]}"
+    assert rd.stdout == defer_fail_want, f"defer_fail {opt} got: {rd.stdout[:300]!r}"
+
 print("ok: defer/try/return/raise/V_MOVED soundness verified")

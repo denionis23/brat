@@ -652,6 +652,7 @@ struct Emitter {
     std::set<std::string> enums;
     std::set<std::string> exported;
     std::vector<std::string> *no_c_symbol = nullptr;
+    bool fn_defers = false;            // the function being emitted registered a `defer`
     std::map<std::string, std::optional<std::string>> fn_ret;
     std::map<std::string, int> codes;
     std::set<std::string> user_meths;
@@ -6112,6 +6113,7 @@ void Emitter::emit_defer(const Expr &e, const std::string &ind, int line) {
     pre.push_back(cat("{ Val _cv = vstruct(", cm, "); vec_push(", cb, ", _cv); }"));
     pre.push_back(cat("vdfadd(vtagv(\"closure\", ", cb, "));"));
     for (auto &p : pre) ln(ind, p);
+    fn_defers = true;
 }
 
 static std::set<std::string> intersect_names(const std::set<std::string> &a,
@@ -7346,6 +7348,7 @@ void Emitter::define_fn(const std::string &cn, const std::vector<Param> &params,
     }
     ln("  ", "if (bdepth_push()) { vraise(\"recursion too deep\"); return vunwind; }");
     ln("  ", "Val __ret = vnil();");
+    fn_defers = false;
     if (trace_lines) ln("  ", "const BLoc *__tr = _btrace_cur;");
     ln("  ", cat("volatile int64_t ", dfbname, " = vdfsp;"));
     ln("  ", "vdfpush();");
@@ -7496,6 +7499,11 @@ void Emitter::define_fn(const std::string &cn, const std::vector<Param> &params,
     }
     ln("  ", "bdepth_pop();");
     ln("  ", cat("vdfreset(", dfbname, ");"));
+    // The function is handing back an `Err` of its own: a defer that failed on
+    // the way out does not replace it.
+    if (fn_defers)
+        ln("  ", "if (verr_pending() && vis_err(__ret) && __ret.as.tv != vunwind.as.tv) "
+                 "verr_catch_discard();");
     if (trace_lines) ln("  ", "btrace_ret(__tr, __ret);");
     ln("  ", "return __ret;");
     ln("", "}");
