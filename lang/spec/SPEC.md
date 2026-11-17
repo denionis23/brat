@@ -171,9 +171,10 @@ All ownership checking is intra-procedural over local places (`x`, `x.f`,
 - `import a.b` resolves `std.*` modules from the `lang/std` directory next to
   `brat-cxx`, local `a/b.brat` relative to the entry root, or locked packages in
   `brat.toml` / `brat.lock`. Circular imports are rejected.
-- `pub` marks functions, structs, enums, and traits exported across module
-  boundaries. When a sibling `.bri` interface file is present, `check.cpp`
-  verifies exported signatures against it.
+- `pub` marks functions, structs, enums, traits and constants exported across
+  module boundaries. A top-level `let` or `const` without it is private to its
+  file. When a sibling `.bri` interface file is present, `check.cpp` verifies
+  exported signatures against it.
 
 ## 8. C FFI and ABI verification (`ffi_cdecl.cpp`, `ffi_object.cpp`)
 

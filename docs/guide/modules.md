@@ -22,6 +22,10 @@ fn main() -> i64 {
 }
 ```
 
+A top-level `let` or `const` belongs to its file as well: two modules can each
+keep a `cache`, and another file cannot name it. `pub const LIMIT = 10` is the
+binding a module exports, and other files read it as `LIMIT`.
+
 `import math.vec2` looks in three places, in order:
 
 1. Relative to the importing file (`math/vec2.brat`).

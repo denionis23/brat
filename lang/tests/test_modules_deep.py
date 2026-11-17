@@ -128,6 +128,26 @@ def main():
     expect_output(write("cycle/app.brat",
                "import cyc1\nfn main() -> i64 { print(cyc1.a()); return 0 }\n"), "2\n")
 
+    # a top-level binding belongs to its file: two modules and the program each
+    # keep a `seen` and a `STEP`, a `pub const` the program also declares stays
+    # the module's own inside the module, and a binding named like a builtin
+    # does not take the builtin's calls
+    write("private/left.brat",
+          "let mut seen = [\"left\"]\nconst STEP = 2\npub const WIDTH = 3\n"
+          "pub fn left(x) {\n  seen.push(x * STEP + WIDTH)\n  return seen\n}\n")
+    write("private/right.brat",
+          "let mut seen = [\"right\"]\nconst STEP = 10\nlet [lo, hi] = [1, 9]\nlet len = 7\n"
+          "let widen = fn(x) { return x * STEP + hi }\n"
+          "pub fn right(x) {\n  for lo in [x] {\n    seen.push(widen(lo))\n  }\n"
+          "  return [seen, len(seen), len]\n}\n")
+    expect_output(write("private/app.brat",
+               "import left\nimport right\n"
+               "let seen = \"app\"\nconst STEP = 100\nconst WIDTH = 50\nlet lo = 0\n"
+               "let widen = \"wide\"\n"
+               "fn main() -> i64 {\n  print(left.left(1))\n  print(right.right(1))\n"
+               "  print(seen, STEP, WIDTH, lo, widen)\n  return 0\n}\n"),
+         "['left', 5]\n[['right', 19], 2, 7]\napp 100 50 0 wide\n")
+
     # an interface decides what is exported, and a re-export of an interface-exported
     # function is public even though the function is not `pub`
     write("iface/lib/thing.brat", "fn hidden() -> i64 { return 42 }\n")

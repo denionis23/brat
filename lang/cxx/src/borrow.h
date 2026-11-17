@@ -62,6 +62,9 @@ struct BorrowOut {
 FnTable pub_sigs(const std::vector<StmtP> &body,
                  const std::set<std::string> &exp_fns = {});
 
+// A call by this name is the builtin, whatever binding has the name too.
+bool is_builtin_call(const std::string &name);
+
 // Every `fn` statement in a body, at any depth, in source order.
 void nested_fns(const std::vector<StmtP> &body, std::vector<const Stmt *> &out);
 

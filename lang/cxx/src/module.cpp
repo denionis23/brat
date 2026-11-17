@@ -13,6 +13,7 @@
 #include <map>
 #include <sstream>
 
+#include "borrow.h"
 #include "check.h"
 #include "lexer.h"
 #include "parser.h"
@@ -997,6 +998,59 @@ void flatten(ModuleSet &set, bool prune_imports) {
             if (s->els) stmt(s->els.get());
         }
     };
+    // A top-level `let` or `const` of an imported module is private to it: the
+    // checker refuses another file that names one. In the flat program all of
+    // them would be one namespace, so each takes its module as a suffix. A
+    // `pub const` keeps its name, which is how other files reach it, and a
+    // top-level binding of the root that has the same name steps aside with a
+    // suffix no module has. Every use of the name in the file is renamed, a
+    // local that shadows it included, which keeps what each one refers to. A
+    // call is renamed as well, since a bare uppercase name parses as one and a
+    // closure is called by its binding, but not the call of a builtin, which
+    // wins over a binding of its name. The suffix leaves the first letter
+    // alone: the emitter tells that uppercase name by it.
+    struct Rebind {
+        std::map<std::string, std::string> to;
+
+        void name(std::string &n) const {
+            auto it = to.find(n);
+            if (it != to.end()) n = it->second;
+        }
+        void fn(FnDecl &f) const {
+            for (auto &p : f.params) {
+                name(p.name);
+                expr(p.def.get());
+            }
+            for (auto &st : f.body) stmt(*st);
+        }
+        void expr(Expr *e) const {
+            if (!e) return;
+            if (e->k == EK::Var || e->k == EK::ParFor ||
+                (e->k == EK::Call && !is_builtin_call(e->a)))
+                name(e->a);
+            for (auto &k : e->kids) expr(k.get());
+            if (e->fn) fn(*e->fn);
+        }
+        void stmt(Stmt &s) const {
+            if (s.k == SK::Let || s.k == SK::LetTmp || s.k == SK::Set ||
+                s.k == SK::ForRange || s.k == SK::ForIter)
+                name(s.a);
+            if (s.k == SK::Try && s.opt1) name(*s.opt1);
+            expr(s.e1.get());
+            expr(s.e2.get());
+            expr(s.e3.get());
+            for (auto &f : s.fns) fn(f);
+            for (auto &st : s.body) stmt(*st);
+            for (auto &st : s.body2) stmt(*st);
+            if (s.els) stmt(*s.els);
+        }
+    };
+    std::set<std::string> pub_consts;
+    for (size_t i = 1; i < set.files.size(); i++) {
+        for (const auto &sp : set.files[i].body) {
+            if (sp->k == SK::Pub && inner(*sp)->konst) pub_consts.insert(inner(*sp)->a);
+        }
+    }
     std::set<std::string> expanded;
     std::vector<StmtP> flat;
     // A module's statements land where its `import` sits in the importer, not
@@ -1007,12 +1061,22 @@ void flatten(ModuleSet &set, bool prune_imports) {
         std::vector<StmtP> &out;
         bool do_prune;
         const std::set<std::string> &live_fns;
+        const std::set<std::string> &pub_consts;
 
         void go(size_t idx) {
             const std::string &path = set.files[idx].path;
             if (expanded.count(path)) return;
             expanded.insert(path);
             Tag tag{set, path};
+            Rebind own;
+            const std::optional<std::string> &ns = set.files[idx].ns;
+            for (const auto &sp : set.files[idx].body) {
+                const Stmt *s = ns ? sp.get() : inner(*sp);
+                if ((s->k != SK::Let && s->k != SK::LetTmp) || s->a == "_" || s->a[0] == '@')
+                    continue;
+                if (ns) own.to[s->a] = s->a + "__" + *ns;
+                else if (pub_consts.count(s->a)) own.to[s->a] = s->a + "__";
+            }
             for (auto &sp : set.files[idx].body) {
                 if (sp->k == SK::Import) {
                     for (const auto &[name, target] : set.files[idx].imports) {
@@ -1029,11 +1093,12 @@ void flatten(ModuleSet &set, bool prune_imports) {
                         if (!live_fns.count(*nm)) continue;
                     }
                 }
+                if (!own.to.empty()) own.stmt(*sp);
                 tag.stmt(sp.get());
                 out.push_back(std::move(sp));
             }
         }
-    } walk{set, expanded, flat, do_prune, live_fns};
+    } walk{set, expanded, flat, do_prune, live_fns, pub_consts};
     walk.go(0);
     set.flat = std::move(flat);
     // A call of a fn that can raise, written as a statement of a `try` body,

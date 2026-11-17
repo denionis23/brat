@@ -2816,6 +2816,8 @@ static void nested_fns_stmt(const Stmt &s, std::vector<const Stmt *> &out) {
 
 }  // namespace
 
+bool is_builtin_call(const std::string &name) { return BUILTINS.count(name) > 0; }
+
 void nested_fns(const std::vector<StmtP> &body, std::vector<const Stmt *> &out) {
     for (const auto &sp : body) {
         if (sp) nested_fns_stmt(*sp, out);
