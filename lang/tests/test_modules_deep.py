@@ -128,6 +128,24 @@ def main():
     expect_output(write("cycle/app.brat",
                "import cyc1\nfn main() -> i64 { print(cyc1.a()); return 0 }\n"), "2\n")
 
+    # one module of a cycle may run top-level statements; with two the order
+    # between them would depend on who is imported first, and that is refused
+    write("cycle_one/cyc1.brat",
+          "import cyc2\nlet base = 10\npub fn a() -> i64 { return cyc2.b() + base }\n")
+    write("cycle_one/cyc2.brat", "import cyc1\npub fn b() -> i64 { return 1 }\n")
+    expect_output(write("cycle_one/app.brat",
+               "import cyc1\nfn main() -> i64 { print(cyc1.a()); return 0 }\n"), "11\n")
+    write("cycle_two/cyc1.brat",
+          "import cyc2\nlet mut log = [\"one\"]\n"
+          "pub fn note(s) {\n  log.push(s)\n  return len(log)\n}\n")
+    write("cycle_two/cyc2.brat",
+          "import cyc1\nlet n = cyc1.note(\"two\")\npub fn count() { return n }\n")
+    stateful = write("cycle_two/app.brat",
+                     "import cyc1\nimport cyc2\n"
+                     "fn main() -> i64 { print(cyc2.count()); return 0 }\n")
+    refused(stateful, "import cycle: ")
+    check_cxx_agrees(stateful, "import cycle: ")
+
     # a top-level binding belongs to its file: two modules and the program each
     # keep a `seen` and a `STEP`, a `pub const` the program also declares stays
     # the module's own inside the module, and a binding named like a builtin

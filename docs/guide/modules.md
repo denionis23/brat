@@ -42,6 +42,12 @@ imported functions are pruned before code emission). If two imported modules
 export the same function name, an unqualified call fails with `ambiguous
 unqualified name` and asks you to spell `mod_a.fn_name(...)`.
 
+A module's top-level statements run once, where the first `import` that
+reaches it sits. Modules that only declare functions and types can import each
+other. A cycle in which two modules both have top-level statements is refused
+with `import cycle`: the one imported first would run before the other had
+bound its names.
+
 ### `.bri` interface files and `pub use`
 
 Drop `circle.bri` next to `circle.brat` to lock down its public surface (`fn`,

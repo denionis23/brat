@@ -355,6 +355,67 @@ struct Loader {
         return idx;
     }
 
+    // A module's top-level statements run where it is first imported. Modules
+    // that only declare things may import each other freely. When two modules
+    // of one cycle both run statements, the one imported first would run before
+    // the other had bound its names, so that program is refused.
+    void refuse_stateful_cycles() const {
+        const size_t n = set.files.size();
+        std::vector<int> first_stmt(n, 0);
+        for (size_t i = 0; i < n; i++) {
+            for (const auto &sp : set.files[i].body) {
+                const SK k = inner(*sp)->k;
+                if (k == SK::Import || k == SK::PubUse || k == SK::Fn || k == SK::ExportFn ||
+                    k == SK::Impl || k == SK::Trait || k == SK::Enum || k == SK::Struct ||
+                    k == SK::Extern || k == SK::ExternStruct)
+                    continue;
+                first_stmt[i] = sp->line > 0 ? sp->line : 1;
+                break;
+            }
+        }
+        // Tarjan: `low[v]` is the earliest file on the stack that `v` reaches.
+        std::vector<int> index(n, -1), low(n, 0);
+        std::vector<bool> on_stack(n, false);
+        std::vector<size_t> stack;
+        int next = 0;
+        auto connect = [&](auto &&self, size_t v) -> void {
+            index[v] = low[v] = next++;
+            stack.push_back(v);
+            on_stack[v] = true;
+            for (const auto &kv : set.files[v].imports) {
+                const size_t w = kv.second;
+                if (index[w] < 0) {
+                    self(self, w);
+                    low[v] = std::min(low[v], low[w]);
+                } else if (on_stack[w]) {
+                    low[v] = std::min(low[v], index[w]);
+                }
+            }
+            if (low[v] != index[v]) return;
+            std::vector<size_t> busy;
+            for (;;) {
+                const size_t w = stack.back();
+                stack.pop_back();
+                on_stack[w] = false;
+                if (first_stmt[w]) busy.push_back(w);
+                if (w == v) break;
+            }
+            if (busy.size() < 2) return;
+            std::sort(busy.begin(), busy.end());
+            const SourceFile &a = set.files[busy[0]], &b = set.files[busy[1]];
+            throw ModuleError("import cycle: " + a.path + " and " + b.path +
+                              " import each other and both run top-level statements (line " +
+                              std::to_string(first_stmt[busy[0]]) + " and line " +
+                              std::to_string(first_stmt[busy[1]]) +
+                              "); the one imported first would run before the other has bound "
+                              "its names. Keep the statements in one of them, or move what both "
+                              "need into a third module");
+        };
+        for (size_t v = 0; v < n; v++) {
+            if (index[v] < 0) connect(connect, v);
+        }
+    }
+
     void scan_imports(size_t idx) {
         fs::path dir = fs::path(set.files[idx].path).parent_path();
         std::vector<std::string> names;
@@ -902,6 +963,7 @@ ModuleSet load_modules(const std::string &path) {
     l.std_base = stdlib_root();
     l.vendor_base = vendor_root(l.base);
     l.visit(abs, true, "");
+    l.refuse_stateful_cycles();
     return std::move(l.set);
 }
 
@@ -913,6 +975,7 @@ ModuleSet load_modules(const std::string &path, const std::string &root_source) 
     l.std_base = stdlib_root();
     l.vendor_base = vendor_root(l.base);
     l.visit(abs, true, "", &root_source);
+    l.refuse_stateful_cycles();
     return std::move(l.set);
 }
 

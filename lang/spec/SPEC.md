@@ -168,9 +168,13 @@ All ownership checking is intra-procedural over local places (`x`, `x.f`,
 
 ## 7. Modules and `.bri` interfaces
 
-- `import a.b` resolves `std.*` modules from the `lang/std` directory next to
-  `brat-cxx`, local `a/b.brat` relative to the entry root, or locked packages in
-  `brat.toml` / `brat.lock`. Circular imports are rejected.
+- `import a.b` looks for `a/b.brat` relative to the importing file, then under
+  `vendor/` (packages pinned by `brat.lock`), then, for a `std.` path, in the
+  `lang/std` directory next to `brat-cxx`.
+- A file is loaded once, and its top-level statements run where the first
+  `import` that reaches it sits. Modules may import each other, but a cycle in
+  which two or more modules have top-level statements is rejected: the one
+  imported first would run before the other had bound its names.
 - `pub` marks functions, structs, enums, traits and constants exported across
   module boundaries. A top-level `let` or `const` without it is private to its
   file. When a sibling `.bri` interface file is present, `check.cpp` verifies
