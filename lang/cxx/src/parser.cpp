@@ -1212,6 +1212,7 @@ private:
     StmtP enum_stmt() {
         want("enum");
         std::string tname = to_str(want_id("enum name").text);
+        if (enums_.count(tname)) fail("duplicate enum '" + tname + "'");
         want("{");
         static const std::unordered_set<std::string_view> kPositionalTypeHeads = {
             "i8", "u8", "i16", "u16", "i32", "u32", "i64", "u64",

@@ -305,6 +305,15 @@ fn main() -> i64 { return 0 }
 )
 
 expect_check_err(
+    "duplicate_enum",
+    """enum Color { Red, Green }
+enum Color { Blue }
+fn main() -> i64 { return 0 }
+""",
+    "duplicate enum 'Color'",
+)
+
+expect_check_err(
     "result_guarded_not_exhaustive",
     """fn f(r: Result[i64, str]) -> i64 {
   match r {
