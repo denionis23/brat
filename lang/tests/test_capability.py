@@ -434,7 +434,37 @@ fn main() -> i64 {
         if rc != 0:
             fail(name, "a joined pointer use must be accepted, got:\n%s" % text)
 
-    print("CAPABILITY ALL GREEN (%d cases)" % (len(CASES) + len(accepted)))
+    # A temporary swap is refused for the borrow, on both writes, and for
+    # nothing else: the item taken out of `v` is not `v`, so putting it back
+    # closes no cycle. Putting `v` into that item still does.
+    parts = {
+        "temp_swap": ('''fn main() -> i64 {
+  let mut v = [[1], [2], [3]]
+  let tmp = v[0]
+  v[0] = v[2]
+  v[2] = tmp
+  print(v)
+  return 0
+}
+''', False),
+        "part_takes_whole": ('''fn main() -> i64 {
+  let mut v = [[1], [2]]
+  let mut inner = v[0]
+  inner.push(v)
+  return 0
+}
+''', True),
+    }
+    for name in sorted(parts):
+        src, cycle = parts[name]
+        path = os.path.join(TMP, name + ".brat")
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(src)
+        rc, text = check_one(path)
+        if rc == 0 or (CYCLE in text) != cycle:
+            fail(name, "want a refusal %s a cycle, got:\n%s" % ("with" if cycle else "without", text))
+
+    print("CAPABILITY ALL GREEN (%d cases)" % (len(CASES) + len(accepted) + len(parts)))
 
 
 def run_gate():

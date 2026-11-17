@@ -498,9 +498,12 @@ void alias_map(const View &body, std::map<std::string, std::string> &out) {
     }
 }
 
+// `below` receives the names bound once to a part of their root, as in
+// `let tmp = v[0]`: such a name stands for something under `v`, never for `v`.
 void cycle_alias_map(const View &body, std::map<std::string, std::string> &out,
                      const std::map<std::string, std::string> &vars,
-                     const StructFields &sf, const std::set<std::string> &acyc_structs) {
+                     const StructFields &sf, const std::set<std::string> &acyc_structs,
+                     std::set<std::string> &below) {
     for (const Stmt *s : body) {
         if (!s) continue;
         if ((s->k == SK::Let || s->k == SK::LetTmp) && s->e1) {
@@ -510,13 +513,17 @@ void cycle_alias_map(const View &body, std::map<std::string, std::string> &out,
                 if (r.empty() && s->e1->k == EK::Call && kPtrAliasCalls.count(s->e1->a) &&
                     !s->e1->kids.empty())
                     r = root(s->e1->kids[0].get());
-                if (!r.empty() && r != s->a) out[s->a] = r;
+                if (!r.empty() && r != s->a) {
+                    out[s->a] = r;
+                    if (!s->mut && is_nested_place(s->e1.get())) below.insert(s->a);
+                    else below.erase(s->a);
+                }
             }
         }
         if (s->k == SK::Try && s->opt1) out.erase(*s->opt1);
-        cycle_alias_map(view(s->body), out, vars, sf, acyc_structs);
-        cycle_alias_map(view(s->body2), out, vars, sf, acyc_structs);
-        cycle_alias_map(else_of(*s), out, vars, sf, acyc_structs);
+        cycle_alias_map(view(s->body), out, vars, sf, acyc_structs, below);
+        cycle_alias_map(view(s->body2), out, vars, sf, acyc_structs, below);
+        cycle_alias_map(else_of(*s), out, vars, sf, acyc_structs, below);
     }
 }
 
@@ -665,6 +672,7 @@ void run_cycles(const View &stmts, std::map<std::string, std::string> vars,
 
 void cycles(const View &body, std::vector<BorrowDiag> &out, Owner &own,
             const std::map<std::string, std::string> &alias,
+            const std::set<std::string> &below,
             const FnSummaries *fns,
             const std::map<std::string, std::string> &vars,
             const StructFields &sf,
@@ -683,8 +691,11 @@ void cycles(const View &body, std::vector<BorrowDiag> &out, Owner &own,
                 is_nested_place(ed.v_expr))
                 continue;
             if (vars.count(rv) && is_acyclic_type(vars.at(rv), acyc)) continue;
+            // The same through a name: `let tmp = x[i]` and then `x[j] = tmp`.
+            const bool part = ed.v_expr && ed.v_expr->k == EK::Var && below.count(rv) > 0;
             rc = resolve(rc, alias);
             rv = resolve(rv, alias);
+            if (part && rc == rv) continue;
             if (vars.count(rv) && is_acyclic_type(vars.at(rv), acyc)) continue;
             if (own.owns(rc, rv))
                 out.push_back(BorrowDiag{s->line, cycle_msg(rv, rc), std::nullopt});
@@ -699,9 +710,9 @@ void cycles(const View &body, std::vector<BorrowDiag> &out, Owner &own,
         case SK::Spawn:
         case SK::Scope:
         case SK::Try:
-            cycles(view(s->body), out, own, alias, fns, vars, sf, acyc);
-            cycles(view(s->body2), out, own, alias, fns, vars, sf, acyc);
-            cycles(else_of(*s), out, own, alias, fns, vars, sf, acyc);
+            cycles(view(s->body), out, own, alias, below, fns, vars, sf, acyc);
+            cycles(view(s->body2), out, own, alias, below, fns, vars, sf, acyc);
+            cycles(else_of(*s), out, own, alias, below, fns, vars, sf, acyc);
             break;
         case SK::Fn:
         case SK::ExportFn:
@@ -724,8 +735,9 @@ void run_cycles(const View &stmts, std::map<std::string, std::string> vars,
     Owner own;
     collect_var_types(stmts, vars, sf);
     std::map<std::string, std::string> alias;
-    cycle_alias_map(stmts, alias, vars, sf, acyc);
-    cycles(stmts, out, own, alias, fns, vars, sf, acyc);
+    std::set<std::string> below;
+    cycle_alias_map(stmts, alias, vars, sf, acyc, below);
+    cycles(stmts, out, own, alias, below, fns, vars, sf, acyc);
 }
 
 struct Event {
