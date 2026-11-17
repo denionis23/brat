@@ -290,6 +290,26 @@ r = run_brat("run", shared_ok)
 check(r.returncode == 0 and r.stdout == "red green\n",
       f"shared variant name in a match: {r.stdout} {r.stderr}")
 
+# `return match` returns the value of the arm that matches.
+return_match = write_file("run/return_match.brat", """enum Shape { Dot, Line(n) }
+fn size(s) -> i64 {
+  return match s {
+    Dot => 0,
+    Line(n) => n,
+  }
+}
+fn word(n: i64) -> str {
+  return match n { 1 => "one", _ => "many" }
+}
+fn main() -> i64 {
+  print(size(Dot), size(Line(4)), word(1), word(7))
+  return 0
+}
+""")
+r = run_brat("run", return_match)
+check(r.returncode == 0 and r.stdout == "0 4 one many\n",
+      f"return match: {r.stdout} {r.stderr}")
+
 expect_check_err(
     "shared_variant_non_exhaustive",
     """enum Color { Red, Green(shade) }

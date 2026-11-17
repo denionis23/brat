@@ -123,8 +123,8 @@ All ownership checking is intra-procedural over local places (`x`, `x.f`,
 ## 5. Control flow, `Option`/`Result`, and errors
 
 - `if` / `else`, `while`, `for i in a..b`, `for x in coll`, and `match` are
-  statements (`match` may also be used in return/value position when exhaustive
-  over an `enum` or carrying a `_` wildcard arm).
+  statements. `return match x { p => e, ... }` returns the value of the arm
+  that matches; anywhere else a `match` has no value.
 - Built-in sum types: `Option[T] = Some(T) | None` and
   `Result[T, E] = Ok(T) | Err(E)`.
 - Postfix `expr?`:

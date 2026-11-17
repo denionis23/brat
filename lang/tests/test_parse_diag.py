@@ -60,6 +60,7 @@ CASES = {
     "import_as": "import std.json as js\nprint(1)\n",
     "import_then_as": "import std.json\nlet as = 1\nprint(as)\n",
     "import_slash": "import geo/shape/circle\nprint(1)\n",
+    "match_value": "let r = match 1 { 1 => 10, _ => 20 }\nprint(r)\n",
     "kw_fn": "fn while(x) {\n  return x\n}\n",
     "kw_param": "fn f(mut: i64) {\n  return 1\n}\n",
     "kw_catch": 'try {\n  raise("x")\n} catch for {\n  print(1)\n}\n',
@@ -114,6 +115,8 @@ WANT = {
     "import_as": "1: error: import takes no `as`: after `import std.json` the prefix is `json.` at line 1",
     "import_then_as": None,
     "import_slash": "1: error: an import path is dotted: write `import geo.shape.circle` at line 1",
+    "match_value": "1: error: `match` is a statement and has no value here: assign in its arms, "
+                   "or `return match ...` from a fn at line 1",
     "kw_fn": "1: error: fn wants a plain name, got 'while' at line 1",
     "kw_param": "1: error: parameter wants a plain name, got 'mut' at line 1",
     "kw_catch": "3: error: catch wants a plain name, got 'for' at line 3",

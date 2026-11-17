@@ -732,6 +732,9 @@ private:
                 step();
                 auto s = std::make_unique<Stmt>();
                 s->k = SK::Return;
+                // `return match x { p => e, ... }`: each arm that is one
+                // expression returns it.
+                if (peek().kind == TK::Kw && at("match")) return match_stmt(true);
                 if (at("}") || at(";")) {
                     eat(";");
                     s->e1 = mk_none();
@@ -2095,7 +2098,7 @@ private:
         return nullptr;
     }
 
-    std::vector<StmtP> match_stmt() {
+    std::vector<StmtP> match_stmt(bool arms_return = false) {
         uint32_t ml = peek().line;
         want("match");
         auto scrut = expr();
@@ -2128,6 +2131,8 @@ private:
                 want("}");
             } else {
                 arm.body = stmt();
+                if (arms_return && arm.body.size() == 1 && arm.body[0]->k == SK::Expr)
+                    arm.body[0]->k = SK::Return;
             }
             arms.push_back(std::move(arm));
             eat(",");
@@ -2673,6 +2678,10 @@ private:
             return e;
         }
         if (t.kind == TK::Id && t.text == "None") return mk_none();
+        if (t.kind == TK::Kw && t.text == "match") {
+            fail("`match` is a statement and has no value here: assign in its arms, or "
+                 "`return match ...` from a fn", t.line);
+        }
         if (!is_name(t)) fail("stuck at '" + to_str(t.text) + "'", t.line);
         const std::string name = to_str(t.text);
         if (at("(")) {
