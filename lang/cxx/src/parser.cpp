@@ -2228,6 +2228,8 @@ private:
             std::vector<std::pair<std::string, std::pair<std::vector<const Pat *>, bool>>> seen;
         };
         std::vector<Tags> owners;
+        // Tags that two enums share: an arm for one covers it in either.
+        std::vector<std::string> shared;
         bool has_wild = false;
         for (const auto &a : arms) {
             if (!a.pat || a.pat->k == PK::Wild || a.pat->k == PK::Bind) {
@@ -2246,7 +2248,15 @@ private:
                 continue;
             }
             auto it = enums_rev_.find(tag);
-            if (it == enums_rev_.end() || !it->second) continue;
+            if (it == enums_rev_.end()) continue;
+            if (!it->second) {
+                bool all = !a.guard;
+                for (const Pat *sp : subs) {
+                    if (!space_total(*sp)) all = false;
+                }
+                if (all) shared.push_back(tag);
+                continue;
+            }
             const std::string &owner = *it->second;
             Tags *slot = nullptr;
             for (auto &o : owners) {
@@ -2288,6 +2298,9 @@ private:
                 for (const auto &t : it->second) {
                     bool have = false;
                     for (const auto &s : total) {
+                        if (s == t) have = true;
+                    }
+                    for (const auto &s : shared) {
                         if (s == t) have = true;
                     }
                     if (!have) missing.push_back(t);

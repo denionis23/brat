@@ -271,6 +271,39 @@ fn main() -> i64 { return 0 }
     "non-exhaustive match",
 )
 
+# A variant name two enums share: an arm for it covers it in either enum, and
+# the variant it does not cover is still reported.
+shared_ok = write_file("run/shared_variant.brat", """enum Color { Red, Green(shade) }
+enum Light { Red, Amber }
+fn name(c) -> str {
+  match c {
+    Red => { return "red" },
+    Green(s) => { return "green" },
+  }
+}
+fn main() -> i64 {
+  print(name(Red), name(Green(1)))
+  return 0
+}
+""")
+r = run_brat("run", shared_ok)
+check(r.returncode == 0 and r.stdout == "red green\n",
+      f"shared variant name in a match: {r.stdout} {r.stderr}")
+
+expect_check_err(
+    "shared_variant_non_exhaustive",
+    """enum Color { Red, Green(shade) }
+enum Light { Red, Amber }
+fn name(c) -> str {
+  match c {
+    Green(s) => { return "green" },
+  }
+}
+fn main() -> i64 { return 0 }
+""",
+    "non-exhaustive match: missing red in enum Color",
+)
+
 expect_check_err(
     "result_guarded_not_exhaustive",
     """fn f(r: Result[i64, str]) -> i64 {
