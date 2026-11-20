@@ -1180,6 +1180,21 @@ struct FnTyper {
         arity_and_arena = quiet;
     }
 
+    // A statement throws the value it computes away, and a `Result` loses its
+    // `Err` with it. A `try` around the statement changes nothing: only `?`
+    // sends an `Err` to the `catch`. A variable or an element written as a
+    // statement is dropped the same way. A `defer` is left out: it has no
+    // `let _ =`, and `defer fs.remove(p)` is the usual way to clean up.
+    void result_dropped(const Expr &e, const Ty &got, bool named) {
+        if (got.k != Ty::Result) return;
+        if (named || e.k == EK::MCall)
+            must("the `Result` of this call is dropped here (hint: `match` handles it, "
+                 "`?` after the call passes an `Err` on, `let _ = ...` ignores it)");
+        else if (e.k == EK::Var || e.k == EK::Idx)
+            must("this `Result` is dropped here (hint: `match` handles it, "
+                 "`?` after it passes an `Err` on, `let _ = ...` ignores it)");
+    }
+
     // `if` and `while` test a bool. A number or a container there is a test for
     // zero or for empty, which `n != 0` and `len(xs) > 0` say in the open.
     void cond(const Expr &e) {
@@ -2960,14 +2975,9 @@ void FnTyper::stmt(const Stmt &s) {
                      "(hint: `" + e.a + "(...)?` passes it on, `let _ = " + e.a +
                      "(...)` ignores it)");
         }
-        // A statement throws the value of its call away, and with a declared
-        // `Result` an `Err` goes with it. A `try` around the statement changes
-        // nothing: only `?` sends an `Err` to the `catch`. A fn that raises is
-        // left to the rule above: it has its own message, and in a `try` body
-        // its call is the call with `?`.
-        if ((named || e.k == EK::MCall) && !raiser && got.k == Ty::Result)
-            must("the `Result` of this call is dropped here (hint: `match` handles it, "
-                 "`?` after the call passes an `Err` on, `let _ = ...` ignores it)");
+        // A fn that raises is left to the rule above: it has its own message,
+        // and in a `try` body its call is the call with `?`.
+        if (!raiser) result_dropped(e, got, named);
         if (current_region() == 0) break;
         if (e.k == EK::Closure) {
             std::set<std::string> ms;

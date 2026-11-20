@@ -128,6 +128,10 @@ FIXTURES = {
                          '  let n = relay("1")?\n  return Ok(n)\n}\n'),
     # The arguments after a closure belong to the statement, not to the closure's last line.
     'closure_line.brat': 'fn f(a: i64) -> i64 {\n  return a\n}\nfn apply(g, x) {\n  return g(x)\n}\nprint(apply(fn(x) {\n  return x\n}, f(1, nope)))\n',
+    # A variable or an element that holds a `Result` loses its `Err` as a statement too.
+    'result_bare.brat': ('fn port(text: str) -> Result[i64, str] {\n  let n = text.parse_int()?\n  return Ok(n)\n}\n'
+                         'fn bare() -> i64 {\n  let r = port("x")\n  r\n  let v = [port("1"), port("2")]\n  v[0]\n'
+                         '  let _ = r\n  let _ = v[1]\n  return 0\n}\n'),
 }
 
 
@@ -144,6 +148,12 @@ EXPECT = {
     "ann.brat": ["ann.brat:1: error: let `x`: annotated i64, got str"],
     "meth.brat": ["meth.brat:2: error: no method `nope` for vec[i64]"],
     "field.brat": ["field.brat:2: error: no field `y` on struct (has x)"],
+    "result_bare.brat": [
+        "result_bare.brat:7: error: this `Result` is dropped here "
+        "(hint: `match` handles it, `?` after it passes an `Err` on, `let _ = ...` ignores it)",
+        "result_bare.brat:9: error: this `Result` is dropped here "
+        "(hint: `match` handles it, `?` after it passes an `Err` on, `let _ = ...` ignores it)",
+    ],
     "setfield.brat": [
         "setfield.brat:2: error: assign to immutable `s.y` (want `let mut` or mut param)",
         "setfield.brat:2: error: no field `y` on struct (has x)",
