@@ -1354,9 +1354,14 @@ static bint _vch_total_slots = 0;
 /* Asked before a wait, defined with the tasks: nonzero when the wait is over. */
 static int vtask_lost(VChan *c);
 
-/* Around a wait, defined with the pool: a worker that waits is not working. */
-static void bpool_wait_begin(void);
-static void bpool_wait_end(void);
+/* Around a wait, defined with the pool: a worker that waits is not working.
+ * A task also lists its wait, so that the failure of a task of its scope can
+ * wake it. The begin call returns nonzero when such a failure is already
+ * there, and the caller then ends the wait with vtask_cancelled(). */
+typedef struct VWait { VChan *c; struct BTask *t; struct VWait *next; } VWait;
+static int bpool_wait_begin(VChan *c, VWait *w);
+static void bpool_wait_end(VWait *w);
+static Val vtask_cancelled(void);
 
 /* A closed slot goes back to the table once it holds nothing and has no active callers. */
 static void _vch_put(VChan *c) {
@@ -1430,9 +1435,10 @@ BFN Val vchan_send(Val h, Val v) {
     _vch_lk(c);
     while (c->len == c->cap && !c->closed) {
         if (vtask_lost(c)) { _vch_ul(c); _vch_put(c); return vunwind; }
-        bpool_wait_begin();
+        VWait w;
+        if (bpool_wait_begin(c, &w)) { _vch_ul(c); _vch_put(c); return vtask_cancelled(); }
         _vch_wait_snd(c);
-        bpool_wait_end();
+        bpool_wait_end(&w);
     }
     if (c->closed) {
         _vch_ul(c);
@@ -1456,9 +1462,10 @@ BFN Val vchan_recv(Val h) {
     _vch_lk(c);
     while (c->len == 0 && !c->closed) {
         if (vtask_lost(c)) { _vch_ul(c); _vch_put(c); return vunwind; }
-        bpool_wait_begin();
+        VWait w;
+        if (bpool_wait_begin(c, &w)) { _vch_ul(c); _vch_put(c); return vtask_cancelled(); }
         _vch_wait_rcv(c);
-        bpool_wait_end();
+        bpool_wait_end(&w);
     }
     if (c->len == 0) {
         _vch_ul(c);
@@ -1638,6 +1645,8 @@ static BTask *g_q_tail = 0;
 static bint g_q_nleft = 0;
 static bint g_parked = 0;
 static bint g_pool_waiting = 0;     /* workers inside a channel wait */
+static bint g_root_err = 0;         /* failed tasks of no scope that no join has taken yet */
+static VWait *g_waits = 0;          /* the channel waits of tasks, under btlock */
 static int g_pool_stop = 0;
 static int g_pool_started = 0;
 static int BRAT_UNUSED g_pool_atexit_reg = 0;
@@ -1645,6 +1654,8 @@ static int BRAT_UNUSED g_pool_atexit_reg = 0;
 static pid_t g_pool_pid = 0;
 #endif
 static BTLS int g_btask_self;
+static BTLS BTask *g_btask_cur;     /* the task this thread is running */
+static BTLS int g_task_cancelled;   /* the running task ended a wait with vtask_cancelled() */
 static BTLS int g_pool_thread;      /* this thread is a pool worker */
 
 #if defined(_WIN32)
@@ -1672,6 +1683,24 @@ typedef struct VScope {
 } VScope;
 static BTLS VScope *_vscope_top;
 
+/* A task whose scope has a failed task is cancelled at its next channel wait:
+ * the join raises that failure whatever the others do, and a task waiting on
+ * a channel that only a failed task would have served never ends. A task of
+ * no scope answers to the failures of tasks of no scope. */
+static int vtask_failed_locked(const BTask *t) {
+    if (!t->scope) return g_root_err > 0;
+    for (const VScope *sc = t->scope; sc; sc = sc->up) {
+        if (sc->err) return 1;
+    }
+    return 0;
+}
+
+static Val vtask_cancelled(void) {
+    g_task_cancelled = 1;
+    vraise("task cancelled: another task of its scope failed");
+    return vunwind;
+}
+
 /* The channel the main thread last had to wait on. The task that ends last
  * wakes it there; a stale entry wakes nobody. */
 static VChan *g_ch_main = 0;
@@ -1692,7 +1721,10 @@ static int vtask_lost(VChan *c) {
             if (sc->err) { lost = 1; sc->err = 0; e = sc->errv; sc->errv = vnil(); }
         }
         for (BTask *t = g_done; t && !lost; t = t->qnext) {
-            if (t->err) { lost = 1; t->err = 0; e = t->result; t->result = vnil(); }
+            if (t->err) {
+                lost = 1; t->err = 0; e = t->result; t->result = vnil();
+                if (g_root_err > 0) g_root_err--;
+            }
         }
     }
     btask_unlock();
@@ -1831,18 +1863,33 @@ static void bpool_grow_locked(void) {
     g_pool_started = n + 1;
 }
 
-static void bpool_wait_begin(void) {
-    if (!g_pool_thread) return;
+static int bpool_wait_begin(VChan *c, VWait *w) {
+    BTask *t = g_btask_cur;
+    if (!t) return 0;
     btask_lock();
-    g_pool_waiting++;
-    bpool_grow_locked();
+    if (vtask_failed_locked(t)) {
+        btask_unlock();
+        return 1;
+    }
+    w->c = c;
+    w->t = t;
+    w->next = g_waits;
+    g_waits = w;
+    if (g_pool_thread) {
+        g_pool_waiting++;
+        bpool_grow_locked();
+    }
     btask_unlock();
+    return 0;
 }
 
-static void bpool_wait_end(void) {
-    if (!g_pool_thread) return;
+static void bpool_wait_end(VWait *w) {
+    if (!g_btask_cur) return;
     btask_lock();
-    g_pool_waiting--;
+    for (VWait **p = &g_waits; *p; p = &(*p)->next) {
+        if (*p == w) { *p = w->next; break; }
+    }
+    if (g_pool_thread) g_pool_waiting--;
     btask_unlock();
 }
 
@@ -1854,6 +1901,8 @@ static void bpool_idle_wake(void) {
 
 static void btask_run(BTask *t) {
     int outer = g_btask_self;
+    BTask *outer_cur = g_btask_cur;
+    int outer_cancelled = g_task_cancelled;
     int outer_arena = barena_depth;
     VScope *outer_scope = _vscope_top;
     int outer_pending = _verr_pending;
@@ -1862,6 +1911,8 @@ static void btask_run(BTask *t) {
     const BLoc *outer_trace_line = _btrace_cur;
     Val outer_unwind = outer_pending ? vunwind : vnil();
     g_btask_self = 1;
+    g_btask_cur = t;
+    g_task_cancelled = 0;
     barena_depth = 0;
     _vscope_top = t->scope;
     _verr_pending = 0;
@@ -1924,18 +1975,28 @@ static void btask_run(BTask *t) {
             t->result = vnil();
         }
     }
+    /* The failure that cancelled it is already on its way to the join. */
+    if (t->err && g_task_cancelled) {
+        vrc_dec(t->result);
+        t->result = vnil();
+        t->err = 0;
+    }
     vunwind = outer_unwind;
     _verr_pending = outer_pending;
     _verr_exc = outer_exc;
     _verr_at = outer_line;
     _btrace_cur = outer_trace_line;
     g_btask_self = outer;
+    g_btask_cur = outer_cur;
+    g_task_cancelled = outer_cancelled;
     barena_depth = outer_arena;
     _vscope_top = outer_scope;
 
     btask_lock();
     g_q_nleft--;
     VChan *wake = g_q_nleft == 0 ? g_ch_main : NULL;
+    VChan *cancel[BPOOL_CAP + 1];
+    int ncancel = 0;
     if (t->scope) {
         if (t->err) {
             if (!t->scope->err) { t->scope->err = 1; t->scope->errv = t->result; t->result = vnil(); }
@@ -1943,8 +2004,14 @@ static void btask_run(BTask *t) {
         }
         t->scope->nleft--;
     } else {
+        if (t->err) g_root_err++;
         t->qnext = g_done;
         g_done = t;
+    }
+    if (t->err) {
+        for (VWait *w = g_waits; w && ncancel <= BPOOL_CAP; w = w->next) {
+            if (vtask_failed_locked(w->t)) cancel[ncancel++] = w->c;
+        }
     }
     bpool_idle_wake();
     btask_unlock();
@@ -1952,6 +2019,11 @@ static void btask_run(BTask *t) {
         _vch_lk(wake);
         _vch_wake_all(wake);
         _vch_ul(wake);
+    }
+    for (int i = 0; i < ncancel; i++) {
+        _vch_lk(cancel[i]);
+        _vch_wake_all(cancel[i]);
+        _vch_ul(cancel[i]);
     }
 }
 
@@ -2051,6 +2123,7 @@ BFN void vjoin_all(void) {
     }
     BTask *list = g_done;
     g_done = 0;
+    g_root_err = 0;
     if (self) g_parked--;
     btask_unlock();
     int err = 0;

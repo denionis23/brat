@@ -366,6 +366,130 @@ CASES["task_error_rounds"] = WORK + '''fn main() -> i64 {
 }
 '''
 
+# A task that waits on a channel only a failed task would have served must not
+# keep the join waiting: the join raises the failure that was there first.
+CASES["failed_task_recv_waiter_join_all"] = '''fn main() -> i64 {
+  let ch = chan(1)
+  try {
+    spawn { raise("boom") }
+    spawn { print(ch.recv()) }
+    join_all()
+  } catch e {
+    print(e)
+  }
+  print("done")
+  return 0
+}
+'''
+
+CASES["failed_task_recv_waiter_scope"] = '''fn main() -> i64 {
+  let ch = chan(1)
+  try {
+    scope {
+      spawn { raise("boom") }
+      spawn { print(ch.recv()) }
+    }
+  } catch e {
+    print(e)
+  }
+  print("done")
+  return 0
+}
+'''
+
+CASES["failed_task_before_late_recv"] = '''fn main() -> i64 {
+  let ch = chan(1)
+  try {
+    scope {
+      spawn { raise("boom") }
+      spawn {
+        sleep_ms(100)
+        print(ch.recv())
+      }
+    }
+  } catch e {
+    print(e)
+  }
+  print("done")
+  return 0
+}
+'''
+
+CASES["failed_task_chain_of_waiters"] = '''fn main() -> i64 {
+  let a = chan(1)
+  let b = chan(1)
+  try {
+    scope {
+      spawn { raise("boom") }
+      spawn { b.send(a.recv()) }
+      spawn { print(b.recv()) }
+    }
+  } catch e {
+    print(e)
+  }
+  print("done")
+  return 0
+}
+'''
+
+CASES["failed_task_full_channel_senders"] = '''fn main() -> i64 {
+  let ch = chan(1)
+  ch.send(1)
+  try {
+    scope {
+      spawn { raise("boom") }
+      spawn { ch.send(2) }
+      spawn { ch.send(3) }
+    }
+  } catch e {
+    print(e)
+  }
+  print("done")
+  return 0
+}
+'''
+
+CASES["failed_task_many_waiters_one_error"] = '''fn main() -> i64 {
+  let ch = chan(1)
+  try {
+    scope {
+      spawn { print(ch.recv()) }
+      spawn { print(ch.recv()) }
+      spawn { raise("boom") }
+      spawn { print(ch.recv()) }
+      spawn { print(ch.recv()) }
+    }
+  } catch e {
+    print(e)
+  }
+  print("done")
+  return 0
+}
+'''
+
+# The failure of an inner scope belongs to that scope: a task of the outer one
+# that waits is not cancelled and still gets its value.
+CASES["inner_scope_failure_leaves_outer_waiter"] = '''fn main() -> i64 {
+  let ch = chan(1)
+  scope {
+    spawn { print(ch.recv()) }
+    spawn {
+      try {
+        scope {
+          spawn { raise("inner") }
+        }
+      } catch e {
+        print(e)
+      }
+      ch.send("late")
+    }
+  }
+  print("done")
+  return 0
+}
+'''
+
+
 def build(src, name):
     path = os.path.join(TMP, name + ".brat")
     with open(path, "w", encoding="utf-8") as f:
@@ -411,6 +535,13 @@ WANT = {
     "task_error_at_send": "div by zero\n1\n",
     "task_error_waits_for_running": "7\nearly\n",
     "task_error_rounds": "300\n",
+    "failed_task_recv_waiter_join_all": "boom\ndone\n",
+    "failed_task_recv_waiter_scope": "boom\ndone\n",
+    "failed_task_before_late_recv": "boom\ndone\n",
+    "failed_task_chain_of_waiters": "boom\ndone\n",
+    "failed_task_full_channel_senders": "boom\ndone\n",
+    "failed_task_many_waiters_one_error": "boom\ndone\n",
+    "inner_scope_failure_leaves_outer_waiter": "inner\nlate\ndone\n",
 }
 
 for name, src in CASES.items():

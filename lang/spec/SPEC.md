@@ -163,6 +163,11 @@ All ownership checking is intra-procedural over local places (`x`, `x.f`,
 - A `send` or `recv` of `main` that has to wait once every task has ended
   re-raises the error of a task that failed, as the join after it would have.
   With no failed task it keeps waiting.
+- When a task fails, every other task of its `scope` (of no scope, when the
+  failed task had none) that waits on a channel, now or later, ends that wait
+  with a cancellation error, and the join raises the failure that came first.
+  A task is cancelled only at a channel wait; one that never waits runs to its
+  end. A failure inside a nested `scope` belongs to that scope.
 - `par for x in xs reduce(op, unit) { ... }` requires both `op` (2 parameters)
   and the loop body to have an empty effect row (`raise`, `io`, `alloc`,
   `spawn`, `ffi` all absent) and zero writes to outer state, folding element

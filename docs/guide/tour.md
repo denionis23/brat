@@ -509,6 +509,11 @@ fn main() -> i64 {
 5
 ```
 
+When a task fails, the other tasks of its `scope` that wait on a channel are
+cancelled and the scope raises the first failure. Without that, a task waiting
+for a value that the failed task would have sent could never end. A task that
+does not wait on a channel runs to its end.
+
 `par for x in items reduce(f, unit) { ... }` runs a loop body on several
 threads and folds the results in index order, see
 [PARFOR.md](../design/PARFOR.md).
