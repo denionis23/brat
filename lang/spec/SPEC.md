@@ -41,6 +41,11 @@ and `crt.h` (`lang/engine/`).
   The checker accepts a `Dyn` value wherever a type is declared, and nothing
   checks it again at run time: `fn add(a: i64, b: i64) -> i64` given the result
   of an unannotated fn that returned a string runs `+` on that string.
+- Names: a fn, a struct, an enum, a variant and a trait each have a name of
+  their own in one file. Two of one name, a fn named like a struct, an enum or
+  a variant, and a fn or a `let` closure named like a builtin (`len`, `args`)
+  are compile errors: a call by that name reaches the builtin. A `pub fn`
+  is exempt: the file that imports it gets that fn in place of the builtin.
 
 ### 2.2 Runtime `Val` layout (`crt/core.h`)
 

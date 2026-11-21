@@ -1899,6 +1899,13 @@ std::map<std::string, int> walk_block(const Body &body, Decls &decl, Borrows &bo
     size_t defer_base = errs.active_defers.size();
     std::vector<std::pair<const Expr *, int>> defers;
     std::map<std::string, int> fn_lines;
+    std::map<std::string, int> type_lines;
+    for (const auto &sp : body) {
+        const Stmt &d = sp->k == SK::Pub && !sp->body.empty() ? *sp->body[0] : *sp;
+        if (d.k == SK::Struct || d.k == SK::Enum) type_lines.emplace(d.a, d.line);
+        if (d.k == SK::Enum)
+            for (const Variant &v : d.variants) type_lines.emplace(v.name, d.line);
+    }
     for (size_t i = 0; i < body.size(); i++) {
         const Stmt &s = *body[i];
         errs.idx = static_cast<int>(i);
@@ -1911,6 +1918,17 @@ std::map<std::string, int> walk_block(const Body &body, Decls &decl, Borrows &bo
                 errs.line = d.line;
                 errs.note("duplicate fn `" + first->first + "`",
                           rel_at(first->second, "first declared here"));
+            }
+            if (s.k != SK::Pub && BUILTINS.count(*d.fns[0].name)) {
+                errs.line = d.line;
+                errs.note("fn `" + *d.fns[0].name + "` has the name of a builtin, "
+                          "so a call to it reaches the builtin (hint: pick another name)");
+            }
+            auto clash = type_lines.find(*d.fns[0].name);
+            if (clash != type_lines.end()) {
+                errs.line = d.line;
+                errs.note("fn `" + clash->first + "` has the name of a struct, an enum or a variant",
+                          rel_at(clash->second, "declared here"));
             }
         }
         for (size_t b = 0; b < borrows.v.size();) {

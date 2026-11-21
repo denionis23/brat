@@ -334,6 +334,42 @@ fn main() -> i64 { return 0 }
 )
 
 expect_check_err(
+    "duplicate_trait",
+    """trait Shape { fn area(self) -> i64 }
+trait Shape { fn sides(self) -> i64 }
+fn main() -> i64 { return 0 }
+""",
+    "duplicate trait 'Shape'",
+)
+
+expect_check_err(
+    "struct_named_like_variant",
+    """enum Shape { Dot, Box }
+struct Dot { x: i64 }
+fn main() -> i64 { return 0 }
+""",
+    "struct 'Dot' has the name of a variant",
+)
+
+expect_check_err(
+    "variant_named_like_struct",
+    """struct Dot { x: i64 }
+enum Shape { Dot, Box }
+fn main() -> i64 { return 0 }
+""",
+    "variant 'Dot' has the name of a struct",
+)
+
+expect_check_err(
+    "fn_named_like_variant",
+    """enum Shape { Dot, Box }
+fn Dot() -> i64 { return 1 }
+fn main() -> i64 { return 0 }
+""",
+    "fn `Dot` has the name of a struct, an enum or a variant",
+)
+
+expect_check_err(
     "result_guarded_not_exhaustive",
     """fn f(r: Result[i64, str]) -> i64 {
   match r {

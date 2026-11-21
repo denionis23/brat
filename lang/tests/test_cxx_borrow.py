@@ -25,6 +25,8 @@ OWNERSHIP = {
                     '  fn g() -> i64 { return 2 }\n  let n = g() + h()\n  if c {\n'
                     '    fn side() -> i64 { return 1 }\n    return n + side()\n  } else {\n'
                     '    fn side() -> i64 { return 2 }\n    return n + side()\n  }\n}\n'),
+    'builtin_name.brat': 'fn len(x: vec[i64]) -> i64 {\n  return 99\n}\nfn main() -> i64 {\n  return len([1])\n}\n',
+    'type_name.brat': 'struct Foo { a: i64 }\nfn Foo() -> i64 {\n  return 1\n}\n',
     'dup_method.brat': 'impl Point {\n  fn a(self) -> i64 { return 0 }\n  fn a(self) -> i64 { return 1 }\n}\n',
     'elem_copy.brat': 'fn f(v: vec[i64]) -> i64 {\n  let x = v[0]\n  return x\n}\n',
     'escape_return.brat': 'fn f() -> vec[i64] {\n  let v = [1]\n  let r = v\n  return r\n}\n',
@@ -173,6 +175,15 @@ EXPECT = {
         'dup_fn.brat:1: note: first declared here',
         'dup_fn.brat:5: error: duplicate fn `g`',
         'dup_fn.brat:4: note: first declared here',
+    ],
+    'builtin_name.brat': [
+        'builtin_name.brat: 1 error(s), 0 warning(s)',
+        'builtin_name.brat:1: error: fn `len` has the name of a builtin, so a call to it reaches the builtin (hint: pick another name)',
+    ],
+    'type_name.brat': [
+        'type_name.brat: 1 error(s), 0 warning(s)',
+        'type_name.brat:2: error: fn `Foo` has the name of a struct, an enum or a variant',
+        'type_name.brat:1: note: declared here',
     ],
     'dup_method.brat': [
         'dup_method.brat: 1 error(s), 0 warning(s)',

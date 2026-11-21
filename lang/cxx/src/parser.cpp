@@ -542,6 +542,8 @@ private:
     std::unordered_map<std::string, std::vector<std::string>> enums_;
     std::unordered_map<std::string, std::optional<std::string>> enums_rev_;
     std::unordered_map<std::string, std::vector<std::string>> structs_;
+    std::unordered_set<std::string> traits_;
+    std::unordered_set<std::string> variant_names_;
     std::vector<std::pair<uint32_t, std::string>> stray_;
 
     const Tok &peek() const { return t_[i_]; }
@@ -1165,6 +1167,7 @@ private:
     StmtP trait_stmt() {
         want("trait");
         std::string name = to_str(step().text);
+        if (!traits_.insert(name).second) fail("duplicate trait '" + name + "'");
         want("{");
         std::vector<Sig> sigs;
         while (!at("}")) sigs.push_back(sig());
@@ -1224,6 +1227,7 @@ private:
         want("enum");
         std::string tname = to_str(want_id("enum name").text);
         if (enums_.count(tname)) fail("duplicate enum '" + tname + "'");
+        if (structs_.count(tname)) fail("enum '" + tname + "' has the name of a struct");
         want("{");
         static const std::unordered_set<std::string_view> kPositionalTypeHeads = {
             "i8", "u8", "i16", "u16", "i32", "u32", "i64", "u64",
@@ -1252,6 +1256,8 @@ private:
                 if (prev.name == vname)
                     fail("duplicate variant '" + vname + "' in enum " + tname, v.line);
             }
+            if (structs_.count(vname))
+                fail("variant '" + vname + "' has the name of a struct", v.line);
             Variant var{std::move(vname), {}, {}};
             if (at("(")) {
                 step();
@@ -1296,6 +1302,7 @@ private:
         want("}");
         std::vector<std::string> tags;
         for (const auto &var : variants) {
+            variant_names_.insert(var.name);
             std::string tag = (var.name == "None" && var.fields.empty()) ? "none" : lower_ascii(var.name);
             auto it = enums_rev_.find(tag);
             if (it != enums_rev_.end()) {
@@ -1317,6 +1324,8 @@ private:
         want("struct");
         std::string tname = to_str(want_id("struct name").text);
         if (structs_.count(tname)) fail("duplicate struct '" + tname + "'");
+        if (enums_.count(tname)) fail("struct '" + tname + "' has the name of an enum");
+        if (variant_names_.count(tname)) fail("struct '" + tname + "' has the name of a variant");
         want("{");
         std::vector<StructField> fields;
         std::vector<std::string> fnames;

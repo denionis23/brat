@@ -139,6 +139,12 @@ fn main() -> i64 {
 A named function is not a value you can store. Pass it by name to `map`,
 `filter`, `fold`, `any`, `all`, `find` or `sort_by`, or wrap it in a closure.
 
+A function, a struct, an enum, a variant and a trait each need a name of their
+own. Two of one name, or a function named like a struct, an enum, a variant or
+a builtin such as `len`, is a compile error: a call by that name would reach
+the builtin and leave your function unused. A `pub fn` in a module is exempt:
+the file that imports it gets that function in place of the builtin.
+
 ## Control flow
 
 ```brat run
