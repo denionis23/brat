@@ -110,7 +110,9 @@ Keys keep the order they were inserted in, and `for k in m` walks the keys.
 | `m.copy()` | a shallow copy |
 
 `m[k]` raises `no key` for a key that is not there. `k in m` and `len(m)` work
-on maps.
+on maps. A vector, a map, a struct and a closure cannot be keys: `m[k] = x`
+with one raises `unhashable map key`, as does `m.set(k, x)` written as a
+statement, and `m.has(k)` is `false`.
 
 ## Option, Result and channels
 

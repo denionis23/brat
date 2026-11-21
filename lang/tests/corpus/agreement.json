@@ -1015,6 +1015,16 @@
       "asan": true,
       "from": "review-2026-11-21",
       "note": "A call of a method, or of a closure held in a variable or a parameter, is the call with `?` when it is written as a statement. The `Err` of its `raise` used to be dropped: `s.save()` in a `try` went on to print `saved`. A `None` that comes back does not leave an `Option` fn."
+    },
+    {
+      "name": "map_unhashable_key",
+      "src": "fn main() -> i64 {\n  let mut m = {\"a\": 1}\n  try {\n    m[[1, 2]] = 5\n    print(\"stored\")\n  } catch e {\n    print(e)\n  }\n  try {\n    m.set([1, 2], 5)\n    print(\"set\")\n  } catch e {\n    print(e)\n  }\n  print(len(m), m.has([1, 2]), [1, 2] in m)\n  return 0\n}\n",
+      "wrap": false,
+      "rc": 0,
+      "out": "unhashable map key\nunhashable map key\n1 false false\n",
+      "asan": true,
+      "from": "review-2026-11-21",
+      "note": "`m[k] = x` and a `m.set(k, x)` statement raise when no map can hold the key. They stored nothing and said nothing, and `m.has(k)` answered an `err` value that an `if` took for true."
     }
   ]
 }

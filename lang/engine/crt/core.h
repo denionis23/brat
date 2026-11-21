@@ -2597,6 +2597,9 @@ BFN_HOT Val vmap_get_ic(Val m, const char *k, BFieldIC *ic) {
 }
 BFN Val vmap_has(Val m, Val k) {
     if (m.tag != V_STRUCT) { vraise("no method has"); return vunwind; }
+    /* A key no map can hold is in none: the `err` value this used to answer
+       is true in an `if`. `k in m` says false as well. */
+    if (vmap_key_bad(k)) return vbool(0);
     Val ke;
     if (!_vmap_key_guard(k, &ke)) return ke;
     BRAT_CTR_LOCK_OBJ(m.as.map);
@@ -2692,10 +2695,17 @@ BFN Val vset_at(Val m, Val k, Val v) {
             free(msg);
             return vunwind;
         }
-        if (vmapkey_reserved(k) || vmap_key_bad(k)) {
+        if (vmapkey_reserved(k)) {
             vrc_dec(k);
             vrc_dec(v);
             return vnil();
+        }
+        if (vmap_key_bad(k)) {
+            /* `m[[1, 2]] = x` stored nothing and said nothing. */
+            vrc_dec(k);
+            vrc_dec(v);
+            vraise("unhashable map key");
+            return vunwind;
         }
         map_set_v(m.as.map, k, v);
         return v;
