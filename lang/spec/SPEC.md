@@ -149,6 +149,9 @@ All ownership checking is intra-procedural over local places (`x`, `x.f`,
   `Result` written as a statement is the same error, and so is a call of a fn
   declared inside a body or of a closure bound by `let` (not `let mut`) whose
   body calls `raise`. `defer` is not covered: it has no `let _ =`.
+- The checker reads the body of a fn it can name. A call of a method, or of a
+  closure held in a variable or a parameter, is the call with `?` when it is
+  written as a statement: an `Err` that comes back is raised, not dropped.
 - A fn that declares a result (`-> T`) leaves by `return` or `raise` on every
   path: a body that can run off its end is a compile error. An `if` with an
   `else`, a `match` over variants and a `while true` without `break` count when

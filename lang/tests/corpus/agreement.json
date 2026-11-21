@@ -1005,6 +1005,16 @@
       "asan": false,
       "from": "audit-2026-11",
       "note": "Arithmetic `/` and `%`, `in` on strings, and map key lookups report consistent runtime diagnostics."
+    },
+    {
+      "name": "stmt_call_err_is_raised",
+      "src": "struct S { a: i64 }\nimpl S {\n  fn save(self) { raise(\"disk full\") }\n  fn ok(self) -> i64 { return self.a }\n  fn none(self) { return None }\n}\nfn each(f) {\n  f()\n  print(\"after f\")\n  return 1\n}\nfn opt(s: S) -> Option[i64] {\n  s.none()\n  s.ok()\n  return Some(7)\n}\nfn main() -> i64 {\n  let s = S { a: 1 }\n  try {\n    s.save()\n    print(\"saved\")\n  } catch e {\n    print(\"method:\", e)\n  }\n  let f = fn() { raise(\"boom\") }\n  try {\n    f()\n    print(\"called\")\n  } catch e {\n    print(\"closure:\", e)\n  }\n  try {\n    print(each(f))\n  } catch e {\n    print(\"parameter:\", e)\n  }\n  let mut v = [1]\n  v.push(2)\n  s.ok()\n  print(opt(s), v)\n  return 0\n}\n",
+      "wrap": false,
+      "rc": 0,
+      "out": "method: disk full\nclosure: boom\nparameter: boom\nSome(7) [1, 2]\n",
+      "asan": true,
+      "from": "review-2026-11-21",
+      "note": "A call of a method, or of a closure held in a variable or a parameter, is the call with `?` when it is written as a statement. The `Err` of its `raise` used to be dropped: `s.save()` in a `try` went on to print `saved`. A `None` that comes back does not leave an `Option` fn."
     }
   ]
 }

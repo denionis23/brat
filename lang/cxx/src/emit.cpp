@@ -6675,14 +6675,24 @@ void Emitter::st(const Stmt &s, const std::string &ind) {
     case SK::Expr: {
         V v = ex(*s.e1);
         for (auto &p : v.pre) ln(ind, p);
-        if (dec_able(*s.e1, heap_returns())) {
+        // The checker reads the body of a fn it can name. A method and a
+        // closure held in a variable it cannot, and the `Err` of their `raise`
+        // came back as a value that this statement dropped: `s.save()` inside
+        // a `try` went on as if it had saved. Such a call is the call with `?`.
+        const Expr &call = *s.e1;
+        const bool unseen = call.k == EK::MCall ||
+            (call.k == EK::Call && !fns.count(call.a) &&
+             (sym.count(call.a) || (cap && cap->second.count(call.a))));
+        const bool owned = dec_able(call, heap_returns());
+        if (owned || unseen) {
             // A statement whose value nobody keeps owns it. `vadd(vlit("a"),
             // vlit("b"))` in an `assert` builds a string, and leaving it as
             // `(void)(...)` leaked it once per evaluation; the temp is released
             // before the error check, so a raise cannot skip it.
             std::string t = new_tmp("ex");
             ln(ind, cat("Val ", t, " = (", v.val, ");"));
-            ln(ind, cat("vdrop_temp(", t, ");"));
+            if (unseen) ln(ind, cat("(void)", cur_ret_early == 'R' ? "vquest_ret(" : "vquest(", t, ");"));
+            if (owned) ln(ind, cat("vdrop_temp(", t, ");"));
         } else {
             ln(ind, cat("(void)(", v.val, ");"));
         }
