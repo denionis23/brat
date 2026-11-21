@@ -136,13 +136,6 @@ struct Decls {
         return nullptr;
     }
     bool has(const std::string &n) const { return find(n) != nullptr; }
-    Decl &get(const std::string &n) {
-        for (auto &kv : v) {
-            if (kv.first == n) return *kv.second;
-        }
-        v.emplace_back(n, std::make_shared<Decl>());
-        return *v.back().second;
-    }
     void set(const std::string &n, Decl d) {
         auto sp = std::make_shared<Decl>(std::move(d));
         for (auto &kv : v) {
@@ -152,14 +145,6 @@ struct Decls {
             }
         }
         v.emplace_back(n, std::move(sp));
-    }
-    void erase(const std::string &n) {
-        for (size_t i = 0; i < v.size(); i++) {
-            if (v[i].first == n) {
-                v.erase(v.begin() + static_cast<long>(i));
-                return;
-            }
-        }
     }
 };
 
@@ -174,12 +159,6 @@ struct Borrow {
 struct Borrows {
     std::vector<std::pair<std::string, std::vector<Borrow>>> v;
 
-    std::vector<Borrow> *find(const std::string &n) {
-        for (auto &kv : v) {
-            if (kv.first == n) return &kv.second;
-        }
-        return nullptr;
-    }
     const std::vector<Borrow> *peek(const std::string &n) const {
         for (const auto &kv : v) {
             if (kv.first == n) return &kv.second;
@@ -192,15 +171,6 @@ struct Borrows {
         }
         v.emplace_back(n, std::vector<Borrow>{});
         return v.back().second;
-    }
-    bool has(const std::string &n) const { return peek(n) != nullptr; }
-    void erase(const std::string &n) {
-        for (size_t i = 0; i < v.size(); i++) {
-            if (v[i].first == n) {
-                v.erase(v.begin() + static_cast<long>(i));
-                return;
-            }
-        }
     }
 };
 

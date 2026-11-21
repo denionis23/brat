@@ -171,10 +171,6 @@ static inline Val _vfield_ic_load(Val v, const char *k, BFieldIC *ic, int retain
     return vunwind;
 }
 
-BFN_HOT Val vfield_ic(Val v, const char *k, BFieldIC *ic) {
-    return _vfield_ic_load(v, k, ic, 0, 1);
-}
-
 BFN_HOT Val vfield_map_get_ic(Val v, const char *k, BFieldIC *ic) {
     return _vfield_ic_load(v, k, ic, 1, 0);
 }

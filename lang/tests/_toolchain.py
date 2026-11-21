@@ -289,15 +289,6 @@ def _cache_input(cfile, argv, out, env, timeout):
         return None, None
 
 
-def cache_key(cfile, argv, out, env=None, timeout=10):
-    """Hash supported C inputs; foreign link inputs and opaque flags bypass.
-
-    The installed system toolchain and its runtime libraries must remain stable
-    during a build. A miss compiles the preprocessed bytes used for the key.
-    """
-    return _cache_input(cfile, argv, out, env, timeout)[0]
-
-
 def cc_cached(argv, cfile, out, timeout=300, env=None):
     """Compile C, reusing binaries only for supported, fingerprinted inputs."""
     raw_tmo = os.environ.get("BRAT_CC_TIMEOUT_MS", "").strip()

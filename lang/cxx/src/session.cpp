@@ -114,13 +114,6 @@ struct Chan {
             }
         }
     }
-
-    std::string payload() const {
-        std::set<std::string> kinds;
-        for (const auto &e : events)
-            if (e.op == "send" && e.kind != "any") kinds.insert(e.kind);
-        return kinds.size() == 1 ? *kinds.begin() : "any";
-    }
 };
 
 using Chans = std::map<std::string, Chan>;
