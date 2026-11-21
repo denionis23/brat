@@ -344,7 +344,8 @@ a `try` around it makes no difference: only `?` sends an `Err` to the `catch`.
 The declaration is the `-> Result[...]` of a function or a method, or the
 signature of a builtin such as `write_file` or of a module function such as
 `fs.remove`. A function that calls `raise` itself keeps the rule above,
-whatever it declares. A value that is not wanted is dropped in the open with
+whatever it declares, and so does a function declared inside another one or a
+closure held by a `let` (not `let mut`) whose body calls `raise`. A value that is not wanted is dropped in the open with
 `let _ = ...`:
 
 ```brat run

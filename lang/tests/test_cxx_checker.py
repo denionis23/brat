@@ -132,6 +132,14 @@ FIXTURES = {
     'result_bare.brat': ('fn port(text: str) -> Result[i64, str] {\n  let n = text.parse_int()?\n  return Ok(n)\n}\n'
                          'fn bare() -> i64 {\n  let r = port("x")\n  r\n  let v = [port("1"), port("2")]\n  v[0]\n'
                          '  let _ = r\n  let _ = v[1]\n  return 0\n}\n'),
+    # A fn declared in a body and a closure bound by `let` drop an `Err` as a statement too.
+    'local_drop.brat': ('fn port(n: i64) -> Result[i64, str] {\n  return Ok(n)\n}\n'
+                        'fn bare() -> i64 {\n  fn inner(n: i64) -> Result[i64, str] {\n    return port(n)\n  }\n'
+                        '  inner(2)\n  fn boom(n) {\n    raise("x")\n  }\n  boom(1)\n'
+                        '  let f = fn(n) {\n    raise("x")\n  }\n  f(1)\n'
+                        '  let _ = inner(3)\n  let _ = boom(1)\n  let _ = f(2)\n'
+                        '  let mut g = fn(n) {\n    raise("x")\n  }\n  g = fn(n) {\n    return n\n  }\n  g(1)\n'
+                        '  return 0\n}\n'),
 }
 
 
@@ -153,6 +161,14 @@ EXPECT = {
         "(hint: `match` handles it, `?` after it passes an `Err` on, `let _ = ...` ignores it)",
         "result_bare.brat:9: error: this `Result` is dropped here "
         "(hint: `match` handles it, `?` after it passes an `Err` on, `let _ = ...` ignores it)",
+    ],
+    "local_drop.brat": [
+        "local_drop.brat:8: error: the `Result` of this call is dropped here "
+        "(hint: `match` handles it, `?` after the call passes an `Err` on, `let _ = ...` ignores it)",
+        "local_drop.brat:12: error: `boom` can raise, and the `Err` it returns is dropped here "
+        "(hint: `boom(...)?` passes it on, `let _ = boom(...)` ignores it)",
+        "local_drop.brat:16: error: `f` can raise, and the `Err` it returns is dropped here "
+        "(hint: `f(...)?` passes it on, `let _ = f(...)` ignores it)",
     ],
     "setfield.brat": [
         "setfield.brat:2: error: assign to immutable `s.y` (want `let mut` or mut param)",

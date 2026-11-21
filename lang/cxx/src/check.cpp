@@ -1147,6 +1147,10 @@ struct FnTyper {
     std::set<std::string> arena_ptrs;
     std::map<std::string, std::set<size_t>> closure_sinks;
     std::map<std::string, std::set<size_t>> local_fn_sinks;
+    // A `fn` declared in a body and a `let` closure that calls `raise`: the
+    // global signature table does not know them, and a call to one written as
+    // a statement drops its `Err` the same way.
+    std::map<std::string, FnSig> local_fns;
     std::vector<int> region_stack{0};
     std::set<const Expr *> arena_checked;
     bool arena_only = false;
@@ -1484,10 +1488,12 @@ struct FnTyper {
         std::map<std::string, std::string> saved_tags = active_tags;
         std::map<std::string, int> saved_decl = decl_regions;
         std::map<std::string, int> saved_reg = regions;
+        std::map<std::string, FnSig> saved_local_fns = local_fns;
         Ty saved_ret = ret;
         const int saved_line = line;
         for (size_t i = 0; i < e.fn->params.size(); i++) {
             const auto &p = e.fn->params[i];
+            local_fns.erase(p.name);
             Ty pt = ann_type(p.ann);
             if (pt.k == Ty::Dyn && elem_reg > 0 && i == elem_idx) pt = elem_ty;
             env[p.name] = pt;
@@ -1507,6 +1513,7 @@ struct FnTyper {
         decl_regions = std::move(saved_decl);
         active_tags = std::move(saved_tags);
         annotated_vars = std::move(saved_ann);
+        local_fns = std::move(saved_local_fns);
         env = std::move(saved);
     }
 
@@ -1518,14 +1525,20 @@ struct FnTyper {
             auto sp = body_sink_params(f.body, f.params);
             if (!sp.empty()) local_fn_sinks[*f.name] = std::move(sp);
             else local_fn_sinks.erase(*f.name);
+            FnSig lsig;
+            lsig.ret = ann_type(f.ret);
+            lsig.raises = body_raises(f.body);
+            local_fns[*f.name] = std::move(lsig);
         }
         std::map<std::string, Ty> saved = env;
         std::set<std::string> saved_ann = annotated_vars;
         std::map<std::string, std::string> saved_tags = active_tags;
         std::map<std::string, int> saved_decl = decl_regions;
         std::map<std::string, int> saved_reg = regions;
+        std::map<std::string, FnSig> saved_local_fns = local_fns;
         Ty saved_ret = ret;
         for (const auto &p : f.params) {
+            local_fns.erase(p.name);
             env[p.name] = ann_type(p.ann);
             if (p.ann) annotated_vars.insert(p.name);
             else annotated_vars.erase(p.name);
@@ -1541,6 +1554,7 @@ struct FnTyper {
         decl_regions = std::move(saved_decl);
         active_tags = std::move(saved_tags);
         annotated_vars = std::move(saved_ann);
+        local_fns = std::move(saved_local_fns);
         env = std::move(saved);
     }
 
@@ -1681,6 +1695,7 @@ struct FnTyper {
         auto saved_reg = regions;
         auto saved_aptrs = arena_ptrs;
         auto saved_sinks = closure_sinks;
+        auto saved_local_fns = local_fns;
         std::set<std::string> local_lets;
         auto *saved_blets = cur_block_lets;
         cur_block_lets = &local_lets;
@@ -1689,6 +1704,7 @@ struct FnTyper {
             check_match_exhaustive(body, i);
         }
         cur_block_lets = saved_blets;
+        local_fns = std::move(saved_local_fns);
         for (const auto &v : local_lets) {
             auto eit = saved_env.find(v);
             if (eit != saved_env.end()) env[v] = eit->second;
@@ -2837,6 +2853,14 @@ void FnTyper::stmt(const Stmt &s) {
             } else {
                 closure_sinks.erase(s.a);
             }
+            if (s.k == SK::Let && !s.mut && s.e1->k == EK::Closure && s.e1->fn &&
+                body_raises(s.e1->fn->body)) {
+                FnSig lsig;
+                lsig.raises = true;
+                local_fns[s.a] = std::move(lsig);
+            } else {
+                local_fns.erase(s.a);
+            }
         }
         if (current_region() != 0) {
             for (const auto &n : ms) {
@@ -2965,11 +2989,16 @@ void FnTyper::stmt(const Stmt &s) {
     case SK::Expr: {
         const Ty got = expr(*s.e1);
         const Expr &e = *s.e1;
-        const bool named = e.k == EK::Call && !env.count(e.a);
+        const FnSig *local = nullptr;
+        if (e.k == EK::Call) {
+            auto l = local_fns.find(e.a);
+            if (l != local_fns.end()) local = &l->second;
+        }
+        const bool named = e.k == EK::Call && (local || !env.count(e.a));
         bool raiser = false;
         if (named) {
             auto f = sigs.find(e.a);
-            raiser = f != sigs.end() && f->second.raises;
+            raiser = local ? local->raises : f != sigs.end() && f->second.raises;
             if (raiser && !g_caught.count(&s))
                 must("`" + e.a + "` can raise, and the `Err` it returns is dropped here "
                      "(hint: `" + e.a + "(...)?` passes it on, `let _ = " + e.a +
@@ -2977,7 +3006,7 @@ void FnTyper::stmt(const Stmt &s) {
         }
         // A fn that raises is left to the rule above: it has its own message,
         // and in a `try` body its call is the call with `?`.
-        if (!raiser) result_dropped(e, got, named);
+        if (!raiser) result_dropped(e, local && got.k == Ty::Dyn ? local->ret : got, named);
         if (current_region() == 0) break;
         if (e.k == EK::Closure) {
             std::set<std::string> ms;

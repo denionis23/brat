@@ -146,8 +146,9 @@ All ownership checking is intra-procedural over local places (`x`, `x.f`,
   error, in a `try` body as well: the value is matched, passed on with `?`, or
   dropped with `let _ = ...`. A fn with a `raise` of its own follows the rule
   above instead, whatever it declares. A variable or an element of type
-  `Result` written as a statement is the same error. `defer` is not covered: it
-  has no `let _ =`.
+  `Result` written as a statement is the same error, and so is a call of a fn
+  declared inside a body or of a closure bound by `let` (not `let mut`) whose
+  body calls `raise`. `defer` is not covered: it has no `let _ =`.
 - A fn that declares a result (`-> T`) leaves by `return` or `raise` on every
   path: a body that can run off its end is a compile error. An `if` with an
   `else`, a `match` over variants and a `while true` without `break` count when
