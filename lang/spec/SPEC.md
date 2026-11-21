@@ -20,7 +20,10 @@ and `crt.h` (`lang/engine/`).
   excepted).
 - Numeric literals: decimal, `0x` hex, `0o` octal, and `0b` binary integers
   (`_` separators allowed) denote `i64`; decimals with `.` or `e`/`E` denote
-  IEEE-754 `f64`.
+  IEEE-754 `f64`. A decimal integer has to fit `i64`, and
+  `-9223372036854775808` is written with its minus. A hex, octal or binary
+  literal is at most 64 bits, read as two's complement
+  (`0xFFFFFFFFFFFFFFFF` is `-1`). A wider literal is a compile error.
 - String literals `"..."` interpolate `{expr}`. The escapes are `\n`, `\t`, `\r`,
   `\\`, `\"`, `\'`, `\{` and `\}`. A brace pair that holds no expression stays
   text, and so does any other backslash sequence. A literal that holds NUL is an

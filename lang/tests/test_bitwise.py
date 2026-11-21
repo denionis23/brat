@@ -64,6 +64,17 @@ fn main() -> i64 {
         assert rc.returncode != 0 and "invalid integer literal" in (rc.stdout + rc.stderr), (
             bad_lit, rc.returncode, rc.stdout, rc.stderr)
 
+    # A literal that does not fit used to wrap into another number.
+    for wide_lit in ("9223372036854775808", "99999999999999999999", "0x1FFFFFFFFFFFFFFFF",
+                     "0b" + "1" * 65, "0o2000000000000000000000"):
+        wide_p = os.path.join(TMP, "wide.brat")
+        with open(wide_p, "w", encoding="utf-8") as f:
+            f.write(f"fn main() -> i64 {{\n  let x = {wide_lit}\n  return x\n}}\n")
+        rc = run_cli("check", wide_p)
+        said = rc.stdout + rc.stderr
+        assert rc.returncode != 0 and ("does not fit i64" in said or "more than 64 bits" in said), (
+            wide_lit, rc.returncode, rc.stdout, rc.stderr)
+
     bad_ty = os.path.join(TMP, "bad_type.brat")
     with open(bad_ty, "w", encoding="utf-8") as f:
         f.write("fn main() -> i64 {\n  let x = 1.5 & 2\n  return 0\n}\n")

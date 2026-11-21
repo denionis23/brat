@@ -777,14 +777,14 @@
       "from": "ledger"
     },
     {
-      "name": "int_literal_wraps",
-      "src": "fn main() -> i64 {\n  print(9223372036854775808)\n  print(-9223372036854775808)\n  print(-9223372036854775809)\n  print(18446744073709551616)\n  let x = 9223372036854775808\n  print(x > 0)\n  print(0 - 9223372036854775808)\n  return 0\n}\n",
+      "name": "int_literal_range",
+      "src": "fn main() -> i64 {\n  print(-9223372036854775808)\n  print(9223372036854775807)\n  print(- 9_223_372_036_854_775_808)\n  print(0xFFFFFFFFFFFFFFFF)\n  print(0x8000000000000000)\n  let x = -9223372036854775808\n  print(x < 0)\n  print(5 - -9223372036854775808)\n  return 0\n}\n",
       "wrap": false,
       "rc": 0,
-      "out": "-9223372036854775808\n-9223372036854775808\n9223372036854775807\n0\nfalse\n-9223372036854775808\n",
+      "out": "-9223372036854775808\n9223372036854775807\n-9223372036854775808\n-1\n-9223372036854775808\ntrue\n-9223372036854775803\n",
       "asan": false,
-      "from": "divergence-2026-10-30",
-      "note": "An integer literal is an i64 and wraps in two's complement before comparison."
+      "from": "review-2026-11-21",
+      "note": "A decimal literal has to fit i64, and the minimum is written with its minus. Hex, octal and binary literals are 64 bits read as two's complement. A wider literal is a compile error: `18446744073709551616` used to print 0."
     },
     {
       "name": "f64_repr_at_1e16",

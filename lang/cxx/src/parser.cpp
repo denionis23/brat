@@ -1904,7 +1904,7 @@ private:
             step();
             auto p = std::make_unique<Pat>();
             p->k = PK::Lit;
-            p->lit = num_val(c.text);
+            p->lit = num_val(c.text, c.line, true);
             return p;
         }
         if (c.kind == TK::Str) {
@@ -2536,6 +2536,17 @@ private:
         }
         if (t == "!" || t == "-" || t == "~") {
             step();
+            // The digits of the minimum do not fit on their own. A literal with
+            // something after it (`.`, `[`, `(`, `?`) goes the usual way.
+            if (t == "-" && peek().kind == TK::Num && !next_is(".") && !next_is("[") &&
+                !next_is("(") && !next_is("?")) {
+                const Tok lit = peek();
+                ExprP n = num_val(lit.text, lit.line, true);
+                if (n->i == INT64_MIN && lit.text.find_first_of(".eExXbBoO") == std::string_view::npos) {
+                    step();
+                    return n;
+                }
+            }
             const char *op = t == "!" ? "!" : (t == "-" ? "-" : "~");
             return mk_un(op, un_expr());
         }
@@ -2631,7 +2642,7 @@ private:
 
     ExprP prim_expr() {
         const Tok t = step();
-        if (t.kind == TK::Num) return num_val(t.text);
+        if (t.kind == TK::Num) return num_val(t.text, t.line, false);
         if (t.kind == TK::Id && t.text == "par" && peek().kind == TK::Kw &&
             peek().text == "for") {
             return par_for(t.line);
@@ -2894,11 +2905,19 @@ private:
         }
     }
 
-    static ExprP num_val(std::string_view tok) {
+    // An integer literal used to wrap: `99999999999999999999` was
+    // 7766279631452241919 and `18446744073709551616` was 0. A decimal literal
+    // has to fit i64 (`min_ok` lets the digits of the minimum through, for the
+    // literal that has its minus in front); hex, octal and binary are 64 bits
+    // read as two's complement, so `0xFFFFFFFFFFFFFFFF` is -1.
+    static ExprP num_val(std::string_view tok, uint32_t line, bool min_ok) {
         std::string t(tok);
         for (size_t j = 0; j < t.size();) {
             if (t[j] == '_') t.erase(j, 1); else j++;
         }
+        const auto wide = [&]() -> ParseError {
+            return ParseError("integer literal `" + std::string(tok) + "` needs more than 64 bits", line);
+        };
         if (t.size() > 2 && t[0] == '0') {
             char pfx = static_cast<char>(t[1] | 0x20);
             if (pfx == 'x') {
@@ -2908,20 +2927,25 @@ private:
                     uint64_t d = (ch >= '0' && ch <= '9') ? static_cast<uint64_t>(ch - '0')
                                : (ch >= 'a' && ch <= 'f') ? static_cast<uint64_t>(ch - 'a' + 10)
                                                           : static_cast<uint64_t>(ch - 'A' + 10);
+                    if (v >> 60) throw wide();
                     v = (v << 4) | d;
                 }
                 return mk_num(static_cast<int64_t>(v));
             }
             if (pfx == 'b') {
                 uint64_t v = 0;
-                for (size_t j = 2; j < t.size(); ++j)
+                for (size_t j = 2; j < t.size(); ++j) {
+                    if (v >> 63) throw wide();
                     v = (v << 1) | static_cast<uint64_t>(t[j] - '0');
+                }
                 return mk_num(static_cast<int64_t>(v));
             }
             if (pfx == 'o') {
                 uint64_t v = 0;
-                for (size_t j = 2; j < t.size(); ++j)
+                for (size_t j = 2; j < t.size(); ++j) {
+                    if (v >> 61) throw wide();
                     v = (v << 3) | static_cast<uint64_t>(t[j] - '0');
+                }
                 return mk_num(static_cast<int64_t>(v));
             }
         }
@@ -2929,10 +2953,15 @@ private:
             || t.find('E') != std::string::npos) {
             return mk_float(parse_c_double(t.c_str(), nullptr));
         }
+        const uint64_t top = static_cast<uint64_t>(INT64_MAX) + (min_ok ? 1u : 0u);
         uint64_t v = 0;
         for (char ch : t) {
             if (ch < '0' || ch > '9') continue;
-            v = v * 10u + static_cast<uint64_t>(ch - '0');
+            const uint64_t d = static_cast<uint64_t>(ch - '0');
+            if (v > (top - d) / 10u)
+                throw ParseError("integer literal `" + std::string(tok) + "` does not fit i64 "
+                                 "(the largest is 9223372036854775807)", line);
+            v = v * 10u + d;
         }
         return mk_num(static_cast<int64_t>(v));
     }
