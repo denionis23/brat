@@ -11,14 +11,17 @@ on:
         required: false
         default: 'v0.7.0'
 
-permissions:
-  contents: write
+# The token gets no permission by default. The build jobs only read the
+# repository; `publish` is the one job that may write a release.
+permissions: {}
 
 jobs:
   bundle-posix:
     name: Bundle (${{ matrix.target }})
     runs-on: ${{ matrix.os }}
     timeout-minutes: 60
+    permissions:
+      contents: read
     strategy:
       fail-fast: false
       matrix:
@@ -30,24 +33,29 @@ jobs:
           - os: macos-26
             target: macos-arm64
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          persist-credentials: false
 
       - name: Build native toolchain and portable bundle
         timeout-minutes: 20
         shell: bash
+        env:
+          INPUT_TAG: ${{ inputs.tag }}
+          TARGET: ${{ matrix.target }}
         run: |
           set -euo pipefail
           VERSION="${GITHUB_REF_NAME}"
           if [[ "${GITHUB_EVENT_NAME}" == "workflow_dispatch" ]]; then
-            VERSION="${{ inputs.tag }}"
+            VERSION="${INPUT_TAG}"
           fi
           make -j"$(getconf _NPROCESSORS_ONLN || echo 4)"
-          STAGE="brat-${VERSION}-${{ matrix.target }}"
+          STAGE="brat-${VERSION}-${TARGET}"
           ./lang/cxx/bin/brat-cxx bundle "${STAGE}"
           "${STAGE}/bin/brat" check examples/hello.brat
           tar -czf "${STAGE}.tar.gz" "${STAGE}"
 
-      - uses: actions/upload-artifact@v7
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: dist-${{ matrix.target }}
           path: brat-*.tar.gz
@@ -57,16 +65,22 @@ jobs:
     name: Bundle (windows-x86_64)
     runs-on: windows-2022
     timeout-minutes: 25
+    permissions:
+      contents: read
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          persist-credentials: false
 
       - name: Build native toolchain and portable Windows bundle
         shell: pwsh
+        env:
+          INPUT_TAG: ${{ inputs.tag }}
         run: |
           $ErrorActionPreference = "Stop"
           $version = $env:GITHUB_REF_NAME
           if ($env:GITHUB_EVENT_NAME -eq "workflow_dispatch") {
-            $version = "${{ inputs.tag }}"
+            $version = $env:INPUT_TAG
           }
           $env:PATH = "C:\msys64\mingw64\bin;$env:PATH"
           New-Item -ItemType Directory -Force -Path lang/cxx/bin | Out-Null
@@ -80,7 +94,7 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           Compress-Archive -Path $stage -DestinationPath "$stage.zip"
 
-      - uses: actions/upload-artifact@v7
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: dist-windows-x86_64
           path: brat-*.zip
@@ -90,8 +104,12 @@ jobs:
     name: VS Code Extension (.vsix)
     runs-on: ubuntu-24.04
     timeout-minutes: 10
+    permissions:
+      contents: read
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          persist-credentials: false
 
       - name: Package VS Code extension
         working-directory: editors/vscode
@@ -102,7 +120,7 @@ jobs:
           npx --yes @vscode/vsce package --allow-missing-repository --no-dependencies -o ../../brat-lang.vsix || \
             npx --yes @vscode/vsce package --allow-missing-repository -o ../../brat-lang.vsix
 
-      - uses: actions/upload-artifact@v7
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: dist-vscode
           path: brat-lang.vsix
@@ -113,10 +131,14 @@ jobs:
     needs: [bundle-posix, bundle-windows, vscode-extension]
     runs-on: ubuntu-24.04
     timeout-minutes: 10
+    permissions:
+      contents: write
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          persist-credentials: false
 
-      - uses: actions/download-artifact@v7
+      - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
         with:
           path: dist-raw
 
@@ -127,7 +149,7 @@ jobs:
           find dist-raw -type f \( -name '*.tar.gz' -o -name '*.zip' -o -name '*.vsix' \) -exec cp {} release-out/ \;
           (cd release-out && sha256sum * > SHA256SUMS && cat SHA256SUMS)
 
-      - uses: actions/upload-artifact@v7
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: release-bundle-all
           path: release-out/*
