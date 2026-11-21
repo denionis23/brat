@@ -4,7 +4,7 @@ Planned work is ordered strictly after correctness and diagnostic quality:
 
 1. Compiler and runtime soundness: fuzzing lexer, parser, checker, Cheader/DWARF
    readers, and `std.json`/`std.http` parsers under ASan/UBSan/TSan across all
-   175 test suites.
+   122 test suites.
 2. Diagnostics and editor feedback: tighter error spans and fix hints in
    `check.cpp`/`borrow.cpp`, plus incremental workspace indexing in `brat-cxx
    lsp`.

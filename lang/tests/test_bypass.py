@@ -163,7 +163,7 @@ def spawn_write_through_immutable_rejected():
 
 def spawn_write_with_mut_still_allowed():
     # A mut binding is required to write at all; the write itself is legal once a
-    # `join_all()` orders it before the parent reads (see test_capability.py).
+    # `join_all()` orders it before the parent reads.
     src = ('fn main() {\n'
            '    let mut v = [1, 2, 3]\n'
            '    spawn {\n'

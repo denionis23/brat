@@ -340,7 +340,7 @@ compiler, and `BRAT_CC_TIMEOUT_MS` (default `120000`) bounds its run time.
 
 ## Platform status
 
-CI runs all 175 test files on Linux x86-64 with GCC and Clang, plus an
+CI runs all 122 test files on Linux x86-64 with GCC and Clang, plus an
 ASan/UBSan/LSan build, on every push. On macOS arm64 and Windows x86-64 (MinGW-w64)
 it builds the compiler and runs the frontend, checker, borrow, module, header
 verification and `bundle` tests. The process and socket tests are Linux-only.

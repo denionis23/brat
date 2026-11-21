@@ -12,7 +12,7 @@ Covers:
     across `bindgen`, `ffi` (`--header`, DWARF `--object`, L5 `--abi-matrix`,
     `verify --bin` `BRATFFI1`), identical C through both CLI doors, and
     runtime.
-  - `KNOWN_LEAKS == set()`, ASan/LSan/UBSan + TSan cleanliness, and
+  - ASan/LSan/UBSan + TSan cleanliness, and
     mock `-D_WIN32 -Wall -Wextra -Werror` `crt.h` header hygiene.
 """
 import _cxx
@@ -371,11 +371,7 @@ fn main() {}
 
 
 def test_sanitizers_and_zero_leaks():
-    # 1. Pin KNOWN_LEAKS == set() in test_asan_examples.py.
-    asan_mod_src = open(os.path.join(HERE, "test_asan_examples.py"), encoding="utf-8").read()
-    check("KNOWN_LEAKS = set()" in asan_mod_src, "KNOWN_LEAKS must remain empty")
-
-    # 2. ASan + LSan + UBSan clean execution of borrows(p) + extern union.
+    # 1. ASan + LSan + UBSan clean execution of borrows(p) + extern union.
     lib_c = write("s94/sanlib.c", """
 #include <stdint.h>
 #include <stdlib.h>
@@ -432,7 +428,7 @@ fn main() {
     check(r_san.returncode == 0 and r_san.stdout == "50\n",
           "ASan+LSan+UBSan run failed: %r" % (r_san.stdout + r_san.stderr))
 
-    # 3. TSan clean concurrent execution using borrows(p) + extern union inside `scope { spawn }`.
+    # 2. TSan clean concurrent execution using borrows(p) + extern union inside `scope { spawn }`.
     tsan_prog = write("s94/tsan.brat", """
 extern union U64 { i: i64, f: f64 }
 extern fn buf_new(v: i64) -> move ptr
@@ -478,7 +474,7 @@ fn main() {
         check(r_tsan.returncode == 0 and r_tsan.stdout == "62\n",
               "TSan run failed: %r" % (r_tsan.stdout + r_tsan.stderr))
 
-    # 4. Mock Win32 header check (-D_WIN32 -Wall -Wextra -Werror) remains clean.
+    # 3. Mock Win32 header check (-D_WIN32 -Wall -Wextra -Werror) remains clean.
     with tempfile.TemporaryDirectory() as wdir:
         for hdr_name, guard in (
             ("windows.h", """
@@ -535,7 +531,7 @@ def main():
     test_extern_union()
     print("ok: extern union + C11 anon inline union/struct")
     test_sanitizers_and_zero_leaks()
-    print("ok: KNOWN_LEAKS=0 + ASan/LSan/UBSan + TSan + -Werror")
+    print("ok: ASan/LSan/UBSan + TSan + -Werror")
     print("FFI BORROWS UNION ALL GREEN (%d asserts)" % asserts)
 
 

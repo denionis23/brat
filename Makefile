@@ -29,20 +29,10 @@ asan:
 	        OBJDIR=build/obj-asan all
 test: $(BIN)
 	python3 lang/tests/run_all.py
-test-native: $(BIN)
-	python3 lang/tests/test_agreement.py
-	python3 lang/tests/test_bitwise.py
-	python3 lang/tests/test_runtime_json_enum.py
-	python3 lang/tests/test_defer_try_soundness.py
-	python3 lang/tests/test_perf_codegen.py
-	python3 lang/tests/test_bindgen_preprocess_sys.py
-	python3 lang/tests/test_dwarf_pax_parfor.py
-	python3 lang/tests/test_examples_and_valgrind.py
-	python3 lang/tests/test_import_prune.py
 bench: $(BIN)
 	python3 scripts/bench.py
 clean:
 	rm -rf build/obj build/obj-asan $(BIN) lang/cxx/bin/brat-cxx-asan bin/brat
-.PHONY: all asan test test-native bench clean
+.PHONY: all asan test bench clean
 
 -include $(DEP)

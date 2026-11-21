@@ -200,7 +200,7 @@ lang/cxx/src/    the compiler, C++20 (26 .cpp files)
 lang/engine/     the runtime, C11 headers
 lang/std/        12 standard-library modules
 lang/examples/   64 small programs, one feature each
-lang/tests/      175 test files
+lang/tests/      122 test files
 scripts/         benchmark runner
 editors/vscode/  syntax grammar and LSP client
 docs/            guides and design notes

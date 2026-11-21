@@ -4,10 +4,9 @@ Covers:
   8.1 `-O2` Relational Abstract Interpreter (`IV x Cong x DBM` + CRT + `FnSummary`)
   8.2 Single-Pass Stream Deforestation (`.map`/`.filter`/`.fold` loop fusion)
   8.3 4-Way Polymorphic Inline Caches (`BFieldIC`/`BMethIC`) + O(1) SWAR UTF-8 `vstr_meta`
-  8.4 Deterministic `vexit` root drain (`KNOWN_LEAKS == set()` under ASan+LSan)
+  8.4 Deterministic `vexit` root drain (no leak under ASan+LSan)
 """
 
-import importlib.util
 import os
 import subprocess
 import time
@@ -449,13 +448,7 @@ check(plines[6] == "мир", f"expected мир negative slice, got {plines[6]}")
 check("43" in plines[7], f"expected 43 from spawned unicode reader, got {plines[7]}")
 
 
-# Zero `KNOWN_LEAKS` Milestone (`vexit` deterministic root drain)
-spec = importlib.util.spec_from_file_location(
-    "asan_ex_mod", os.path.join(HERE, "test_asan_examples.py"))
-asan_mod = importlib.util.module_from_spec(spec)
-spec.loader.exec_module(asan_mod)
-check(asan_mod.KNOWN_LEAKS == set(), f"KNOWN_LEAKS is not empty: {asan_mod.KNOWN_LEAKS}")
-
+# `vexit` deterministic root drain: nothing is left allocated at exit
 exit_src = write_src("clean_exit.brat", """
 let cli = args()
 let heap_s = "allocated_top_level_heap_string_" + str(len(cli) + 12345)

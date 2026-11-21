@@ -64,12 +64,12 @@ Key design choices in the compiler:
 
 ## Test suite (`lang/tests/`)
 
-All 175 test files in `lang/tests/` compile and execute against `brat-cxx`:
+All 122 test files in `lang/tests/` compile and execute against `brat-cxx`:
 
-- `test_agreement.py` (`make test-native`) runs all 109 corpus programs in
+- `test_agreement.py` runs all 109 corpus programs in
   `lang/tests/corpus/agreement.json`.
 - Dedicated suites (`test_cxx_frontend.py`, `test_cxx_checker.py`,
-  `test_cxx_borrow.py`, `test_slice_borrow_http.py`, `test_lexer.py`,
-  `test_front_ends_fuzz.py`, `test_caps_diff.py`, `test_docs_examples.py`,
-  `test_runtime_json_enum.py`, `test_asan_examples.py`) cover parser/checker
-  rules, ownership, FFI ABI verification, sanitizers, and documentation fences.
+  `test_cxx_borrow.py`, `test_lexer.py`, `test_front_ends_fuzz.py`,
+  `test_caps_diff.py`, `test_docs_examples.py`, `test_runtime_json_enum.py`,
+  `test_channels.py`) cover parser/checker rules, ownership, FFI ABI
+  verification, sanitizers, and documentation fences.

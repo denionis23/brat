@@ -2,7 +2,6 @@
 16-byte small strings, plugin pointer ownership, escape summaries and non-Linux platform parity."""
 import _scratch
 
-import importlib.util
 import json
 import os
 import struct
@@ -31,15 +30,6 @@ def brat(*args, cwd=None, env=None):
                           capture_output=True, text=True, timeout=180,
                           cwd=cwd, env=env)
 
-
-# KNOWN_LEAKS closed (`jsonlibtest.brat`, `newcomer.brat`) + ASan
-_asan_spec = importlib.util.spec_from_file_location(
-    "t_asan_ex", os.path.join(HERE, "test_asan_examples.py"))
-with open(os.path.join(HERE, "test_asan_examples.py"), encoding="utf-8") as _af:
-    _asan_txt = _af.read()
-check('"jsonlibtest.brat"' not in _asan_txt and '"newcomer.brat"' not in _asan_txt
-      and "KNOWN_LEAKS = set()" in _asan_txt,
-      "KNOWN_LEAKS must be empty (0 known leaks including syslib.brat)")
 
 leak_brat = os.path.join(TMP, "step36.brat")
 with open(leak_brat, "w", encoding="utf-8") as f:

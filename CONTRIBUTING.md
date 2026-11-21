@@ -27,9 +27,9 @@ Formatting across all `.brat` files is checked with:
 - Bug fixes need a minimal regression test that fails before the change and
   passes after it.
 - Runtime, FFI, and concurrency changes must pass under AddressSanitizer,
-  UndefinedBehaviorSanitizer, and LeakSanitizer
-  (`python3 lang/tests/test_asan_examples.py`), plus ThreadSanitizer when
-  threads, locks, or channels are touched.
+  UndefinedBehaviorSanitizer, and LeakSanitizer (the suite builds its probes
+  with them), plus ThreadSanitizer when threads, locks, or channels are touched
+  (`python3 lang/tests/test_channels.py`).
 - Compiler and runtime edits must compile with zero warnings under `-Wall
   -Wextra -Wformat=2 -Werror` on both GCC and Clang, and `lang/engine/crt.h`
   must stay clean under `x86_64-w64-mingw32-gcc -Werror` (no bare `long` on

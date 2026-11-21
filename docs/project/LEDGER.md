@@ -1,6 +1,6 @@
 # Known Engineering Limits Ledger
 
-Current compiler, runtime, and platform limits for `brat-cxx` (175 test suites
+Current compiler, runtime, and platform limits for `brat-cxx` (122 test suites
 in `lang/tests/`):
 
 | Area | Current behavior and limit |

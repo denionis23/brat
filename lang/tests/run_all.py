@@ -2,7 +2,7 @@
 
 Exit status: 0 when selected tests pass (skips are reported separately),
 1 for test failures, and 2 for invalid arguments or an empty selection.
-BRAT_NESTED=0 prevents test_lang.py from running the same edge tests twice.
+BRAT_NESTED=0 tells test_agreement.py that other test files share the machine.
 """
 import argparse
 import concurrent.futures
@@ -123,22 +123,22 @@ def parse_shard(value):
 
 
 _HEAVY_SUITES = (
-    "test_asan_examples.py",
+    "test_channels.py",
+    "test_docs_examples.py",
     "test_agreement.py",
-    "test_native.py",
-    "test_ecosystem.py",
     "test_lsp_incremental.py",
-    "test_security_soundness.py",
-    "test_soundness_edges.py",
-    "test_ffi_callback_aggregates.py",
-    "test_cli.py",
+    "test_env_confinement.py",
+    "test_ecosystem.py",
     "test_http_server_closures.py",
-    "test_cxx_opt.py",
+    "test_enum_dwarf_abi.py",
     "test_stdlib_pkg_regex.py",
-    "test_review_regressions.py",
-    "test_runtime_mem.py",
-    "test_caps_diff.py",
-    "test_containers_own.py",
+    "test_examples_and_valgrind.py",
+    "test_struct_sra.py",
+    "test_tls_sqlite_doc.py",
+    "test_range_fusion_ic.py",
+    "test_cxx_opt.py",
+    "test_ffi_langs.py",
+    "test_hardening.py",
 )
 
 
