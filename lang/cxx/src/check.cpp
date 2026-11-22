@@ -2807,14 +2807,10 @@ void FnTyper::stmt(const Stmt &s) {
     if (s.line) line = s.line;
     switch (s.k) {
     case SK::Unsafe: block(s.body); break;
-    case SK::Scope:
-        if (current_region() != 0 || contains_arena_stmts(s.body)) {
-            bool saved_ao = arena_only;
-            arena_only = true;
-            block(s.body);
-            arena_only = saved_ao;
-        }
-        break;
+    // The body of a `scope` is typed like any other block. It used to be
+    // walked for the arena rules alone, so a wrong argument type or a dropped
+    // `Err` inside `scope { ... }`, tasks included, went unreported.
+    case SK::Scope: block(s.body); break;
     case SK::Block: block(s.body); break;
     case SK::Let:
     case SK::LetTmp: {

@@ -127,6 +127,14 @@ FIXTURES = {
                          '  try {\n    port("x")?\n    write_file("x.txt", "y")?\n  } catch e {\n    print(e)\n  }\n'
                          '  let n = relay("1")?\n  return Ok(n)\n}\n'),
     # The arguments after a closure belong to the statement, not to the closure's last line.
+    # The body of `scope { }` is checked like any other block. The type pass
+    # skipped it: a call with the wrong arguments went to the C compiler, and an
+    # `Err` dropped there was dropped in silence.
+    'scope_types.brat': ('fn add(a: i64, b: i64) -> i64 { return a + b }\n'
+                         'fn boom(n: i64) -> i64 {\n  if n > 0 { raise("task failed") }\n  return 0\n}\n'
+                         'fn main() -> i64 {\n  scope {\n    print(add(1, "x"))\n    let n: i64 = "text"\n'
+                         '    boom(1)\n    spawn { boom(2) }\n    spawn {\n      print(add(2))\n    }\n'
+                         '    spawn { boom(3)? }\n  }\n  return 0\n}\n'),
     'closure_line.brat': 'fn f(a: i64) -> i64 {\n  return a\n}\nfn apply(g, x) {\n  return g(x)\n}\nprint(apply(fn(x) {\n  return x\n}, f(1, nope)))\n',
     # A variable or an element that holds a `Result` loses its `Err` as a statement too.
     'result_bare.brat': ('fn port(text: str) -> Result[i64, str] {\n  let n = text.parse_int()?\n  return Ok(n)\n}\n'
@@ -248,6 +256,15 @@ EXPECT = {
            "(hint: `both(...)?` passes it on, `let _ = both(...)` ignores it)"]
         + [result_dropped(41), result_dropped(47)]
     ),
+    "scope_types.brat": [
+        "scope_types.brat:8: error: arg 2 of `add`: want i64, got str",
+        "scope_types.brat:9: error: let `n`: annotated i64, got str",
+        "scope_types.brat:10: error: `boom` can raise, and the `Err` it returns is dropped here "
+        "(hint: `boom(...)?` passes it on, `let _ = boom(...)` ignores it)",
+        "scope_types.brat:11: error: `boom` can raise, and the `Err` it returns is dropped here "
+        "(hint: `boom(...)?` passes it on, `let _ = boom(...)` ignores it)",
+        "scope_types.brat:13: error: `add` wants 2 args, got 1",
+    ],
     "closure_line.brat": [
         "closure_line.brat:7: error: use of undeclared var `nope`",
         "closure_line.brat:7: error: `f` wants 1 args, got 2",
