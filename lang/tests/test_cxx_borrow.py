@@ -109,6 +109,10 @@ OWNERSHIP = {
                     'print(f(1))\n'),
     'try_move.brat': 'fn f() -> i64 {\n  let v = [1]\n  try {\n    move v\n  } catch e {\n    print(e)\n  }\n  return len(v)\n}\n',
     'typo.brat': 'fn f() -> i64 {\n  return pritn(1)\n}\n',
+    # `log` and `trace` are not values: `log.jnfo("x")` passed and failed in the C
+    # compiler. A variable of that name is still a variable.
+    'typo_log.brat': 'fn f() -> i64 {\n  log.jnfo("x")\n  trace.spam("y")\n  log.info("z")\n  return 0\n}\n',
+    'typo_log_var.brat': 'fn f() -> i64 {\n  let mut log = [1]\n  log.push(2)\n  return len(log)\n}\n',
     'undeclared.brat': 'fn f() -> i64 {\n  s = 1\n  return 0\n}\n',
     'unknown_trait.brat': 'impl Shape for Point {\n  fn area(self) -> i64 {\n    return 0\n  }\n}\n',
     'unsafe_move.brat': 'fn f(v: vec[i64]) -> i64 {\n  unsafe {\n    move v\n  }\n  return len(v)\n}\n',
@@ -401,6 +405,16 @@ EXPECT = {
         'typo.brat: 1 error(s), 0 warning(s)',
         'typo.brat:2: error: use of undeclared var `pritn`',
         'typo.brat: note: help: did you mean `print`?',
+    ],
+    'typo_log.brat': [
+        'typo_log.brat: 2 error(s), 0 warning(s)',
+        'typo_log.brat:2: error: use of undeclared var `log`',
+        'typo_log.brat: note: help: `log` is not a value; it has `log.error`, `log.info`, `log.warn`',
+        'typo_log.brat:3: error: use of undeclared var `trace`',
+        'typo_log.brat: note: help: `trace` is not a value; it has `trace.span`',
+    ],
+    'typo_log_var.brat': [
+        'typo_log_var.brat: 0 error(s), 0 warning(s)',
     ],
     'undeclared.brat': [
         'undeclared.brat: 1 error(s), 0 warning(s)',

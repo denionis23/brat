@@ -80,6 +80,15 @@ ACCEPTED = {
          "util.bri": "fn answer() -> i64\n"},
         [declaration("util__answer", ("num", 42)),
          declaration("main", ("call", "util__answer", []))]),
+    # A variable called like the first part of an import is a variable.
+    "prefix_is_a_variable": (
+        {"app.brat": "import pkg.util\nfn main() -> i64 {\n  let mut pkg = [1]\n  pkg.push(2)\n"
+                     "  return util.answer()\n}\n",
+         "pkg/util.brat": ANSWER},
+        [declaration("pkg__util__answer", ("num", 42), True),
+         ("fn", "main", [], [("let", "pkg", ("vec", [("num", 1)]), True, False, None),
+                             ("expr", ("mcall", ("var", "pkg"), "push", [("num", 2)])),
+                             ("return", ("call", "pkg__util__answer", []))], [], "i64")]),
 }
 
 REJECTED = {
@@ -93,6 +102,14 @@ REJECTED = {
     "missing_module": (
         {"app.brat": "import absent_fixture_module\n"},
         ("no module absent_fixture_module",)),
+    # A qualifier that begins as the imports of the file do and names none of
+    # them is not a variable. It passed and failed in the C compiler (`b_pkg`).
+    "unimported_qualifier": (
+        {"app.brat": "import pkg.util\nprint(pkg.utli.answer())\n", "pkg/util.brat": ANSWER},
+        ("module `pkg.utli` is not imported",)),
+    "unimported_prefix": (
+        {"app.brat": "import pkg.util\nprint(pkg.answer())\n", "pkg/util.brat": ANSWER},
+        ("module `pkg` is not imported",)),
     "ambiguous": (
         {"app.brat": "import left\nimport right\nprint(answer())\n",
          "left.brat": ANSWER, "right.brat": ANSWER},

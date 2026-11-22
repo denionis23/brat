@@ -788,7 +788,10 @@ bool callee_known(const std::string &name, const Decls &decl, FnTable &funcs) {
     if (funcs.sigs.count(name) || BUILTINS.count(name)) return true;
     if (name.find('.') == std::string::npos) return decl.has(name);
     std::string head = root_of(name);
-    if (decl.has(head) || funcs.sigs.count(head) || BUILTIN_HEADS.count(head)) return true;
+    if (decl.has(head) || funcs.sigs.count(head)) return true;
+    // `log` and `trace` are not values: past the dot stands one of the builtins
+    // above or nothing. `log.jnfo("x")` used to pass and fail in the C compiler.
+    if (BUILTIN_HEADS.count(head)) return false;
     return funcs.heads.count(head) > 0;
 }
 
@@ -854,6 +857,13 @@ std::optional<BorrowNote> undeclared_rel(const std::string &name,
     if (name == "enum" || name == "trait" || name == "impl" || name == "struct") {
         return BorrowNote{0, "help: `" + name + "` starts a declaration, so it cannot be used "
                              "inside an expression"};
+    }
+    if (BUILTIN_HEADS.count(name)) {
+        std::string have;
+        for (const std::string &b : BUILTINS) {
+            if (b.rfind(name + ".", 0) == 0) have += (have.empty() ? "`" : ", `") + b + "`";
+        }
+        return BorrowNote{0, "help: `" + name + "` is not a value; it has " + have};
     }
     for (const Decls *d = decl ? decl->outer : nullptr; d; d = d->outer) {
         if (d->has(name)) {

@@ -743,6 +743,26 @@ struct Mangler {
         return targets[0];
     }
 
+    // `std.jsno.parse(x)` and `std.parse(x)` with `import std.json`: `std` is no
+    // variable, it is where the imports of this file begin, and no import has
+    // that name. It used to pass every check and fail in the C compiler
+    // (`'b_std' undeclared`).
+    void refuse_unimported(const std::string &path, size_t cur) {
+        const std::string root = path.substr(0, path.find('.'));
+        if (binds(cur, root) || set.files[cur].functions.count(root) || const_owners.count(root)) return;
+        bool begins = false;
+        for (const auto &[imported, target] : set.files[cur].imports) {
+            (void)target;
+            if (imported.compare(0, root.size() + 1, root + ".") == 0) begins = true;
+        }
+        if (!begins) return;
+        for (size_t at = path.find('.'); ; at = path.find('.', at + 1)) {
+            if (imported_module(path.substr(0, at), cur)) return;
+            if (at == std::string::npos) break;
+        }
+        throw ModuleError("module `" + path + "` is not imported");
+    }
+
     // `mod.NAME` and `mod.f` in value position: an exported constant or a
     // function of the module. The constant keeps its bare name for the checker
     // and carries the module in `b`, which `flatten` folds into the name.
@@ -978,6 +998,7 @@ struct Mangler {
                     resolve_callback_args(e->kids, original, e->a, cur);
                     return e;
                 }
+                refuse_unimported(*path, cur);
             }
         }
         for (auto &k : e->kids) k = walk_expr(std::move(k), cur);
