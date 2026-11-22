@@ -1107,7 +1107,8 @@ bool Emitter::int_expr(const Expr &e, const std::map<std::string, FnEntry> &cand
         return int_expr(*e.kids[0], cand, kind, intvars, vecvars);
     case EK::Idx:
         return fk_vec && e.kids[0]->k == EK::Var &&
-               vecvars.count(e.kids[0]->a) && intish(*e.kids[1], kind, intvars);
+               vecvars.count(e.kids[0]->a) && intish(*e.kids[1], kind, intvars) &&
+               int_expr(*e.kids[1], cand, kind, intvars, vecvars);
     case EK::Bin: {
         static const std::set<std::string> ops = {"+", "-", "*", "/", "%", "&", "|", "^",
                                                   "<<", ">>", "==", "!=", "<", ">", "<=",
@@ -1262,12 +1263,16 @@ bool Emitter::int_body(const StmtList &body, const std::map<std::string, FnEntry
         case SK::SetIdx:
             if (kind != "i64v" && kind != "i64v_dyn" && kind != "f64v") return false;
             if (!(s.e1->k == EK::Var && vecvars.count(s.e1->a))) return false;
-            if (!intish(*s.e2, kind, intvars)) return false;
+            if (!intish(*s.e2, kind, intvars) ||
+                !int_expr(*s.e2, cand, kind, intvars, vecvars))
+                return false;
             if (kind == "f64v") {
                 if (!int_expr(*s.e3, cand, kind, intvars, vecvars) || intish(*s.e3, kind, intvars))
                     return false;
             } else {
-                if (!intish(*s.e3, kind, intvars)) return false;
+                if (!intish(*s.e3, kind, intvars) ||
+                    !int_expr(*s.e3, cand, kind, intvars, vecvars))
+                    return false;
             }
             break;
         case SK::Return:
@@ -1739,6 +1744,7 @@ void Emitter::compute_fast() {
                 ((kind == "i64_dyn" || kind == "i64v_dyn") && !has_ret_ann &&
                  !pure_int_returns(view(fns[name].decl->body), snapshot, pnames, vvars))) {
                 fastint.erase(name);
+                fastkinds.erase(name);
                 it = cand.erase(it);
                 changed = true;
             } else {
@@ -1923,6 +1929,10 @@ std::string Emitter::fast_idx_c(const Expr &e, const std::string &idx) {
 }
 
 std::string Emitter::fast_call_c(const Expr &e, std::string args) {
+    // Only a fast fn has a raw clone. `fastc[name]` on any other name would
+    // enter it into `fastc` with no clone and turn its own wrapper into a
+    // call of nothing.
+    if (!fastc.count(e.a)) throw EmitError("fast call");
     if (!fself_rec.empty() && e.a == fself_rec) {
         if (!args.empty()) args += ", ";
         args += "_rem - 1";

@@ -1025,6 +1025,16 @@
       "asan": true,
       "from": "review-2026-11-21",
       "note": "`m[k] = x` and a `m.set(k, x)` statement raise when no map can hold the key. They stored nothing and said nothing, and `m.has(k)` answered an `err` value that an `if` took for true."
+    },
+    {
+      "name": "fast_fn_index_store_call",
+      "src": "fn check(n) {\n  if n > 100 { return Err(\"too big\") }\n  return n\n}\nfn store(mut v) {\n  v[0] = check(v[1])\n  return 0\n}\nfn mk(n) { return [n, n] }\nfn change(mut v) {\n  v[0] = mk(1)\n  return 0\n}\nfn label(n: i64) -> str { return \"L\" + str(n) }\nfn relabel(mut v) {\n  v[0] = label(1)\n  return 0\n}\nfn sq(n) { return n * n }\nfn fill(mut v) {\n  for i in 0..len(v) { v[i] = sq(i) }\n  return 0\n}\nfn main() -> i64 {\n  print(check(500), check(7))\n  print(mk(4), label(7))\n  let mut w = [0, 3]\n  store(w)\n  print(w)\n  let mut z = [0, 0, 0, 0]\n  fill(z)\n  print(z, sq(5))\n  return 0\n}\n",
+      "wrap": false,
+      "rc": 0,
+      "out": "Err('too big') 7\n[4, 4] L7\n[3, 3]\n[0, 1, 4, 9] 25\n",
+      "asan": false,
+      "from": "torture-2026-11-22",
+      "note": "`v[i] = f(x)` in a function with an untyped `mut` parameter: the integer-only copy of that function called an integer-only copy of `f` that did not exist, and `f` answered its own argument in the whole program."
     }
   ]
 }
