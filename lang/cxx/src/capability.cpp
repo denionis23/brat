@@ -1141,14 +1141,23 @@ FnSummaries build_fn_summaries(const std::vector<StmtP> &body,
                             }
                         }
                     }
-                    std::set<std::string> b1 = local, b2 = local;
-                    if ((s->k == SK::ForRange || s->k == SK::ForIter) && !s->a.empty())
-                        b1.insert(s->a);
-                    if (s->k == SK::Try && s->opt1 && !s->opt1->empty())
-                        b2.insert(*s->opt1);
-                    self(self, view(s->body), std::move(b1));
-                    self(self, view(s->body2), std::move(b2));
-                    self(self, else_of(*s), local);
+                    // The names are copied for a block that exists. Copied for
+                    // every statement, 5,000 `let` in one function took ten
+                    // seconds: three copies of all the names so far at each.
+                    if (!s->body.empty()) {
+                        std::set<std::string> b1 = local;
+                        if ((s->k == SK::ForRange || s->k == SK::ForIter) && !s->a.empty())
+                            b1.insert(s->a);
+                        self(self, view(s->body), std::move(b1));
+                    }
+                    if (!s->body2.empty()) {
+                        std::set<std::string> b2 = local;
+                        if (s->k == SK::Try && s->opt1 && !s->opt1->empty())
+                            b2.insert(*s->opt1);
+                        self(self, view(s->body2), std::move(b2));
+                    }
+                    const View rest = else_of(*s);
+                    if (!rest.empty()) self(self, rest, local);
                     if ((s->k == SK::Let || s->k == SK::LetTmp) && !s->a.empty()) {
                         std::string r = s->e1 ? root(s->e1.get()) : std::string();
                         if (r.empty() && s->e1 && s->e1->k == EK::Call &&

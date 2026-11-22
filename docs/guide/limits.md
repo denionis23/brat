@@ -328,7 +328,8 @@ The runtime is C headers compiled into each program. The compiler strips the
 subsystems a program does not use, so a cold `brat-cxx build -O2` of
 `fn main() -> i64 { return 0 }` takes `0.85 s` (median of 7 on the machine of the
 speed table, `BRAT_NATIVE_CACHE_DISABLE=1`). Build time grows linearly with the
-number of locals in a function (`make bench`, one cold build per row):
+number of locals in a function up to a few hundred (`make bench`, one cold
+build per row):
 
 | Heap string locals (`N`) | Emitted C | Cold `brat-cxx build -O2` |
 |---:|---:|---:|
@@ -336,6 +337,11 @@ number of locals in a function (`make bench`, one cold build per row):
 | 100 | 48.4 KB | 1.65 s |
 | 200 | 89.2 KB | 2.63 s |
 | 400 | 170.6 KB | 4.72 s |
+
+Past that the compiler itself is quadratic in three sizes: the locals of one
+function, the functions of one file and the arguments of one call. With 4,000
+of them `brat-cxx check` takes about a second and `brat-cxx emit-c` up to six;
+the same counts spread over several functions or files cost a fraction of that.
 
 `brat-cxx run` caches the binary. The key covers the compiler, the environment,
 the emitted C, the runtime, the flags and the contents of the linked libraries.
