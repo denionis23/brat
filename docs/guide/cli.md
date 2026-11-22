@@ -76,7 +76,7 @@ Build-time FFI flags accepted by `build` and `run`:
 | `BRAT_ENV_DENY_ALL` | unset | Set to `1` to make `env_get` / `std.env` return `None` for every variable. |
 | `BRAT_RECURSION_BUDGET` | `2000` | Maximum BRAT call depth (`1..1000000`) before raising catchable `recursion too deep`. |
 | `BRAT_PIN_BUDGET_BYTES` | `67108864` (64 MiB) | Maximum slab memory used to pin short SSO strings passed across C FFI (`ptr_of_str` / `str`); `0` disables the cap (unlimited, not recommended for untrusted inputs). |
-| `BRAT_THREADS` | hardware concurrency | Worker thread count for `par for` and the runtime task pool, at most 32. While every worker waits on a channel and a task is queued, the pool adds a thread, up to 128. |
+| `BRAT_THREADS` | hardware concurrency | Worker thread count for `par for` and the runtime task pool, at most 32. While every worker waits on a channel or at the end of a `scope` and a task is queued, the pool adds a thread, up to 128. |
 | `BRAT_TRACE` | unset | `brat run` below `-O2` adds ` at file.brat:N` to an unhandled error. `0` turns that off; `1` asks for it at any level, like `--trace-lines`. |
 
 ## 3. Diagnostic code index (`brat explain <code>`)

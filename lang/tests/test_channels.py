@@ -626,6 +626,146 @@ POOL["pool_all_wait"] = ('''fn main() -> i64 {
   return 0
 }
 ''', "4950\n")
+# The end of a `scope` runs the queued tasks of that scope and no others. It
+# used to run whatever stood first in the queue. A task of the enclosing scope
+# that waits for what this thread does after the join then waited forever, and
+# fork-join recursion piled unrelated tasks on one stack until it ended with
+# `recursion too deep`. `par for` joins the same way.
+POOL["join_leaves_outer_task"] = ('''fn main() -> i64 {
+  let ch = chan(1)
+  scope {
+    spawn { print("A got", ch.recv()) }
+    scope {
+      spawn { sleep_ms(20) }
+    }
+    ch.send(7)
+  }
+  print("done")
+  return 0
+}
+''', "A got 7\ndone\n")
+POOL["join_leaves_outer_consumer"] = ('''fn main() -> i64 {
+  let ch = chan(1)
+  scope {
+    spawn {
+      let mut sum = 0
+      let mut got = ch.recv()
+      while !is_none(got) {
+        sum += got
+        got = ch.recv()
+      }
+      print("consumer done", sum)
+    }
+    scope {
+      spawn {
+        for i in 0..3 { ch.send(i) }
+      }
+    }
+    ch.close()
+  }
+  print("done")
+  return 0
+}
+''', "consumer done 3\ndone\n")
+POOL["join_leaves_root_task"] = ('''fn main() -> i64 {
+  let ch = chan(1)
+  spawn { print("A got", ch.recv()) }
+  scope {
+    spawn { sleep_ms(20) }
+  }
+  ch.send(7)
+  join_all()
+  print("done")
+  return 0
+}
+''', "A got 7\ndone\n")
+POOL["par_for_leaves_outer_task"] = ('''fn add(a: i64, b: i64) -> i64 { return a + b }
+fn main() -> i64 {
+  let ch = chan(1)
+  let items = [1, 2, 3, 4, 5, 6, 7, 8]
+  scope {
+    spawn { print("A got", ch.recv()) }
+    let total = par for x in items reduce(add, 0) {
+      return x * 2
+    }
+    ch.send(total)
+  }
+  print("done")
+  return 0
+}
+''', "A got 72\ndone\n")
+POOL["fork_join_recursion"] = ('''fn psum(lo: i64, hi: i64, out) {
+  if hi - lo <= 4 {
+    let mut s = 0
+    for i in lo..hi { s += i }
+    out.send(s)
+    return
+  }
+  let mid = (lo + hi) / 2
+  let c = chan(2)
+  scope {
+    spawn { psum(lo, mid, c) }
+    spawn { psum(mid, hi, c) }
+  }
+  out.send(c.recv() + c.recv())
+}
+fn main() -> i64 {
+  let out = chan(1)
+  psum(0, 65536, out)
+  print(out.recv())
+  return 0
+}
+''', "2147450880\n")
+# The join takes its own task out of the middle of the queue, and it finds it
+# there without a walk: every scope has the list of its queued tasks. Here the
+# queue holds up to 100,000 tasks of the scope around when a join looks for
+# its two. Run from the head of the queue, as it used to be, this program ends
+# with `recursion too deep`; with a walk from the head it took minutes.
+POOL["join_finds_its_task"] = ('''fn work(i: i64, out) {
+  let c = chan(2)
+  scope {
+    spawn { c.send(i + 0) }
+    spawn { c.send(i + 1) }
+  }
+  out.send(c.recv() + c.recv())
+}
+fn main() -> i64 {
+  let n = 100000
+  let out = chan(n)
+  scope {
+    for i in 0..n {
+      spawn { work(i, out) }
+    }
+  }
+  let mut sum = 0
+  for i in 0..n { sum += out.recv() }
+  print(sum)
+  return 0
+}
+''', "10000000000\n")
+# A worker that waits at the end of a `scope` for a task another worker runs
+# counts as one that waits on a channel: with every worker waiting one way or
+# the other the pool gains a thread for the task they all wait for. With two
+# threads, one at the join and one in `recv`, the sender stayed in the queue.
+POOL["join_counts_as_waiting"] = ('''fn main() -> i64 {
+  let ch = chan(1)
+  let done = chan(1)
+  scope {
+    spawn {
+      scope {
+        spawn { let x = ch.recv() }
+        sleep_ms(50)
+      }
+      done.send(1)
+    }
+    sleep_ms(20)
+    spawn { ch.send(1) }
+    let d = done.recv()
+  }
+  print("done")
+  return 0
+}
+''', "done\n")
 for name, (src, want) in POOL.items():
     path, _ = build(src, name)
     exe = os.path.join(TMP, name + ".exe")

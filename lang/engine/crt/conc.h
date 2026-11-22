@@ -1625,6 +1625,8 @@ struct BTask {
     int has_arg;
     int err;
     BTask *qnext;           /* the run queue and the finished list */
+    BTask *qprev;           /* the run queue */
+    BTask *snext;           /* the queued tasks of its scope */
     BTask *next;            /* the scope that owns it, when there is one */
     struct VScope *scope;
 };
@@ -1644,7 +1646,7 @@ static BTask *g_q_head = 0;
 static BTask *g_q_tail = 0;
 static bint g_q_nleft = 0;
 static bint g_parked = 0;
-static bint g_pool_waiting = 0;     /* workers inside a channel wait */
+static bint g_pool_waiting = 0;     /* workers that wait for another task: on a channel, in a scope join */
 static bint g_root_err = 0;         /* failed tasks of no scope that no join has taken yet */
 static VWait *g_waits = 0;          /* the channel waits of tasks, under btlock */
 static int g_pool_stop = 0;
@@ -1676,6 +1678,8 @@ static void btask_unlock(void) { pthread_mutex_unlock(&btlock); }
  * joined by the same block. */
 typedef struct VScope {
     BTask *tasks;
+    BTask *q_head;          /* its tasks in the run queue, in the order of the queue */
+    BTask *q_tail;
     bint nleft;
     int err;
     Val errv;
@@ -1740,6 +1744,39 @@ static void vscope_attach(VScope *sc, BTask *t) {
     sc->tasks = t;
     sc->nleft++;
     btask_unlock();
+}
+
+/* The run queue. A task of a scope is in the list of that scope as well, in
+ * the same order: the join of a scope takes its first queued task out of the
+ * middle of the queue without a walk over the tasks of every other scope. */
+static void bq_push_locked(BTask *t) {
+    VScope *sc = t->scope;
+    t->qnext = 0;
+    t->qprev = g_q_tail;
+    if (g_q_tail) g_q_tail->qnext = t;
+    else g_q_head = t;
+    g_q_tail = t;
+    if (!sc) return;
+    t->snext = 0;
+    if (sc->q_tail) sc->q_tail->snext = t;
+    else sc->q_head = t;
+    sc->q_tail = t;
+}
+
+/* `t` is the head of the queue or the first queued task of its scope: no task
+ * of its scope is ahead of it either way. */
+static void bq_take_locked(BTask *t) {
+    VScope *sc = t->scope;
+    if (t->qprev) t->qprev->qnext = t->qnext;
+    else g_q_head = t->qnext;
+    if (t->qnext) t->qnext->qprev = t->qprev;
+    else g_q_tail = t->qprev;
+    t->qnext = 0;
+    t->qprev = 0;
+    if (!sc) return;
+    sc->q_head = t->snext;
+    if (!sc->q_head) sc->q_tail = 0;
+    t->snext = 0;
 }
 
 static int bpool_ncpu(void) {
@@ -2051,8 +2088,7 @@ static void *bpool_worker(void *p) {
             break;
         }
         BTask *t = g_q_head;
-        g_q_head = t->qnext;
-        if (!g_q_head) g_q_tail = 0;
+        bq_take_locked(t);
         btask_unlock();
         btask_run(t);
     }
@@ -2085,9 +2121,7 @@ BFN void vspawn(Val clo) {
     }
     if (_vscope_top) vscope_attach(_vscope_top, t);
     btask_lock();
-    if (g_q_tail) g_q_tail->qnext = t;
-    else g_q_head = t;
-    g_q_tail = t;
+    bq_push_locked(t);
     g_q_nleft++;
     bpool_grow_locked();
     bpool_wake();
@@ -2106,8 +2140,7 @@ BFN void vjoin_all(void) {
         if (g_q_head == 0 && g_q_nleft <= target) break;
         if (g_q_head) {
             BTask *t = g_q_head;
-            g_q_head = t->qnext;
-            if (!g_q_head) g_q_tail = 0;
+            bq_take_locked(t);
             btask_unlock();
             btask_run(t);
             btask_lock();
@@ -2146,25 +2179,35 @@ BFN void vjoin_all(void) {
     }
 }
 
+/* The join runs the queued tasks of its own scope and no others. A task of an
+ * enclosing scope may wait for what this thread does after the join: run here,
+ * `spawn { ch.recv() }` followed by `scope { ... }` and `ch.send(x)` waited
+ * for a send that could no longer happen. The pool runs those, so a worker
+ * that waits here counts as one that waits on a channel does. */
 static void _vscope_drain(VScope *sc) {
     for (;;) {
         btask_lock();
         if (sc->nleft <= 0) { btask_unlock(); break; }
-        if (g_q_head) {
-            BTask *t = g_q_head;
-            g_q_head = t->qnext;
-            if (!g_q_head) g_q_tail = 0;
+        BTask *t = sc->q_head;
+        if (t) {
+            bq_take_locked(t);
             btask_unlock();
             btask_run(t);
             continue;
         }
+        if (g_pool_thread) {
+            g_pool_waiting++;
+            bpool_grow_locked();
+        }
 #if defined(_WIN32)
         btask_unlock();
         Sleep(0);
+        btask_lock();
 #else
         pthread_cond_wait(&g_q_idle, &btlock);
-        btask_unlock();
 #endif
+        if (g_pool_thread) g_pool_waiting--;
+        btask_unlock();
     }
 }
 
@@ -2224,9 +2267,7 @@ BFN Val vparfor(Val vec, Val clo, Val unit, Val op) {
         t->next = pf_sc.tasks;
         pf_sc.tasks = t;
         pf_sc.nleft++;
-        if (g_q_tail) g_q_tail->qnext = t;
-        else g_q_head = t;
-        g_q_tail = t;
+        bq_push_locked(t);
         g_q_nleft++;
         off += len;
     }
