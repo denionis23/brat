@@ -1045,6 +1045,16 @@
       "asan": false,
       "from": "torture-2026-11-22",
       "note": "A bool is a bool in the integer-only copy of a function too: it was printed, returned, stored and passed on as `1` or `0`."
+    },
+    {
+      "name": "fast_fn_default_param",
+      "src": "fn add(a: i64, b: i64 = 10) -> i64 { return a + b }\nfn f(a: i64, b: i64 = 2, c: i64 = 3) -> i64 { return a * 100 + b * 10 + c }\nfn dec(a: i64, d: i64 = -1) -> i64 { return a + d }\nfn count(n: i64, acc: i64 = 0) -> i64 {\n  if n == 0 { return acc }\n  return count(n - 1, acc + n)\n}\nfn start(n: i64) -> i64 { return count(n) }\nfn main() -> i64 {\n  print(add(1), add(1, 2))\n  print(f(1), f(1, 5), f(1, 5, 6))\n  print(dec(5), dec(5, 2))\n  print(count(4), start(5))\n  return 0\n}\n",
+      "wrap": false,
+      "rc": 0,
+      "out": "11 3\n123 153 156\n4 7\n10 15\n",
+      "asan": false,
+      "from": "torture-2026-11-22",
+      "note": "A call that leaves a parameter to its default: the integer-only copy of the callee was called with too few arguments and the C did not compile."
     }
   ]
 }

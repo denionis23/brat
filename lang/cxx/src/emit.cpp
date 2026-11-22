@@ -941,6 +941,7 @@ struct Emitter {
     std::string fast_un_c(const Expr &e, const std::string &v);
     std::string fast_idx_c(const Expr &e, const std::string &idx);
     std::string fast_call_c(const Expr &e, std::string args);
+    std::vector<const Expr *> fast_args(const Expr &e);
     std::string fast_bin_c(const Expr &e, const std::string &a, const std::string &b,
                            bool *div_can_fail = nullptr);
     std::string fx(const Expr &e);
@@ -1143,6 +1144,22 @@ bool Emitter::int_expr(const Expr &e, const std::map<std::string, FnEntry> &cand
             auto it = cand.find(e.a);
             if (it == cand.end()) return false;
             if (fastvec.count(e.a) && !fastvec[e.a].empty()) return false;
+            {
+                // `add(1)` for `fn add(a: i64, b: i64 = 10)`: the raw clone takes
+                // every parameter, so the call site writes the default out. Only
+                // a number is written out here; any other default, and a call
+                // with the wrong count, is left to the general path.
+                const auto &ps = it->second.decl->params;
+                if (e.kids.size() > ps.size()) return false;
+                for (size_t i = e.kids.size(); i < ps.size(); i++) {
+                    const Expr *d = ps[i].def.get();
+                    if (d && d->k == EK::Un && d->a == "-" && d->kids.size() == 1)
+                        d = d->kids[0].get();
+                    if (!d || d->k != EK::Num ||
+                        !int_expr(*ps[i].def, cand, kind, intvars, vecvars))
+                        return false;
+                }
+            }
             const std::string &ck = fastkinds[e.a];
             auto ri = fn_ret.find(e.a);
             bool not_bool = (ri == fn_ret.end() || !ri->second || *ri->second != "bool");
@@ -1982,6 +1999,16 @@ std::string Emitter::fast_idx_c(const Expr &e, const std::string &idx) {
     return cat(fn, "(", fsym[e.kids[0]->a], ", ", idx, ")");
 }
 
+// The arguments of a call between raw clones, the defaults of the parameters
+// it leaves out included.
+std::vector<const Expr *> Emitter::fast_args(const Expr &e) {
+    std::vector<const Expr *> av;
+    for (const auto &k : e.kids) av.push_back(k.get());
+    auto it = fast.find(e.a);
+    if (it != fast.end() && it->second.decl) av = pad_defaults(it->second.decl->params, av, e.a);
+    return av;
+}
+
 std::string Emitter::fast_call_c(const Expr &e, std::string args) {
     // Only a fast fn has a raw clone. `fastc[name]` on any other name would
     // enter it into `fastc` with no clone and turn its own wrapper into a
@@ -2055,10 +2082,11 @@ std::string Emitter::fx(const Expr &e) {
     case EK::Call: {
         if (e.a == "len") return cat("((", fsym[e.kids[0]->a], ")->len)");
         std::string args;
-        for (size_t i = 0; i < e.kids.size(); i++) {
+        const std::vector<const Expr *> av = fast_args(e);
+        for (size_t i = 0; i < av.size(); i++) {
             if (i) args += ", ";
-            std::string ai = fx(*e.kids[i]);
-            args += (dbl && fint(*e.kids[i])) ? cat("(double)(", ai, ")") : ai;
+            std::string ai = fx(*av[i]);
+            args += (dbl && fint(*av[i])) ? cat("(double)(", ai, ")") : ai;
         }
         return fast_call_c(e, std::move(args));
     }
@@ -2203,10 +2231,11 @@ std::string Emitter::fchk(const Expr &e, const std::string &ind) {
     case EK::Call: {
         if (e.a == "len") return fx(e);
         std::string args;
-        for (size_t i = 0; i < e.kids.size(); i++) {
-            std::string ai = fchk(*e.kids[i], ind);
+        const std::vector<const Expr *> av = fast_args(e);
+        for (size_t i = 0; i < av.size(); i++) {
+            std::string ai = fchk(*av[i], ind);
             if (i) args += ", ";
-            args += (dbl && fint(*e.kids[i])) ? cat("(double)(", ai, ")") : ai;
+            args += (dbl && fint(*av[i])) ? cat("(double)(", ai, ")") : ai;
         }
         std::string t = new_tmp("t");
         ln(ind, cat(ect, " ", t, " = ", fast_call_c(e, std::move(args)), ";"));
