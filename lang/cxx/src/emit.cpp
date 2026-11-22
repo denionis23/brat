@@ -716,6 +716,9 @@ struct Emitter {
     bool need_vfat = false, need_vset_f = false;
     std::set<std::string> fvecvars;
     std::set<std::string> fboolvars;
+    // Locals of the fn under analysis that hold a bool (`let ok = a < b`).
+    // In a raw clone they are int64_t like every other local.
+    std::set<std::string> fboollocals;
     std::set<std::string> fintvars;
     std::string fself_rec;
     // The trace store of the statement `fst` is emitting. A self-recursive fn
@@ -881,6 +884,8 @@ struct Emitter {
     bool fint(const Expr &e);
     bool booly(const Expr &e);
     bool all_bool(const Expr &e);
+    bool maybe_bool(const Expr &e);
+    void bool_locals_in(const StmtList &body);
     bool print_ok(const Expr &e, const std::map<std::string, FnEntry> &cand, const std::string &kind,
                   const std::set<std::string> &intvars, const std::set<std::string> &vecvars = {});
     // `returned`, when non-null, records whether each `return` expression is a
@@ -1154,6 +1159,17 @@ bool Emitter::int_expr(const Expr &e, const std::map<std::string, FnEntry> &cand
                         return false;
                 }
             }
+            {
+                // The other way round: a bool passed to a parameter that is
+                // not declared `bool` would arrive as the int 1 or 0, and the
+                // callee may return, print or store it.
+                const auto &callee_params = it->second.decl->params;
+                const std::set<std::string> no_bools;
+                const std::set<std::string> &bools = fastbool.count(e.a) ? fastbool[e.a] : no_bools;
+                for (size_t i = 0; i < e.kids.size() && i < callee_params.size(); i++) {
+                    if (!bools.count(callee_params[i].name) && maybe_bool(*e.kids[i])) return false;
+                }
+            }
             for (const auto &a : e.kids)
                 if (!int_expr(*a, cand, kind, intvars, vecvars)) return false;
             return true;
@@ -1218,6 +1234,36 @@ bool Emitter::all_bool(const Expr &e) {
     return false;
 }
 
+// What a raw clone would print, store or pass on as 1 or 0 where the program
+// says `true` or `false`.
+bool Emitter::maybe_bool(const Expr &e) {
+    if (e.k == EK::Move) return maybe_bool(*e.kids[0]);
+    return all_bool(e) || (e.k == EK::Var && fboollocals.count(e.a));
+}
+
+void Emitter::bool_locals_in(const StmtList &body) {
+    std::function<bool(const StmtList &)> scan = [&](const StmtList &sl) -> bool {
+        bool grew = false;
+        for (const Stmt *sp : sl) {
+            if (!sp) continue;
+            const Stmt &s = *sp;
+            if ((s.k == SK::Let || s.k == SK::LetTmp || s.k == SK::Set) && s.e1 &&
+                s.a.find('.') == std::string::npos && maybe_bool(*s.e1) &&
+                fboollocals.insert(s.a).second)
+                grew = true;
+            if (scan(view(s.body))) grew = true;
+            if (scan(view(s.body2))) grew = true;
+            if (const Stmt *els = real_else(s)) {
+                StmtList one = els->k == SK::Block ? view(els->body) : StmtList{els};
+                if (scan(one)) grew = true;
+            }
+        }
+        return grew;
+    };
+    fboollocals.clear();
+    while (scan(body)) {}
+}
+
 bool Emitter::print_ok(const Expr &e, const std::map<std::string, FnEntry> &cand,
                        const std::string &kind, const std::set<std::string> &intvars,
                        const std::set<std::string> &vecvars) {
@@ -1228,6 +1274,7 @@ bool Emitter::print_ok(const Expr &e, const std::map<std::string, FnEntry> &cand
         const Expr &a = *ap;
         if (a.k == EK::Str) continue;
         if (booly(a) || (a.k == EK::Var && fboolvars.count(a.a))) return false;
+        if (maybe_bool(a)) return false;
         if (!int_expr(a, cand, kind, intvars, vecvars)) return false;
         if (a.k == EK::Num && a.is_float) fslots++;
         else if (dbl && !intish(a, kind, intvars)) fslots++;
@@ -1273,6 +1320,8 @@ bool Emitter::int_body(const StmtList &body, const std::map<std::string, FnEntry
                 if (!intish(*s.e3, kind, intvars) ||
                     !int_expr(*s.e3, cand, kind, intvars, vecvars))
                     return false;
+                // `v[i] = a < b` stores a bool: the vector is no longer all ints.
+                if (maybe_bool(*s.e3)) return false;
             }
             break;
         case SK::Return:
@@ -1669,6 +1718,7 @@ void Emitter::compute_fast() {
             for (const auto &p : params) pnames.insert(p.name);
             const std::set<std::string> &vvars = fastvec[name];
             fboolvars = fastbool.count(name) ? fastbool[name] : std::set<std::string>();
+            bool_locals_in(view(fns[name].decl->body));
             std::set<std::string> intvars;
             bool mixed_fvar = false;
             if (kind == "i64" || kind == "i64_dyn" || kind == "i64v" || kind == "i64v_dyn") {
@@ -1741,7 +1791,10 @@ void Emitter::compute_fast() {
                               !pure_float_returns(view(fns[name].decl->body), snapshot, pnames)));
             if (!ok || ((kind == "f64" || kind == "f64v") && ret_ann != "bool" && any_int) ||
                 bad_bool_ret || bad_fdyn ||
-                ((kind == "i64_dyn" || kind == "i64v_dyn") && !has_ret_ann &&
+                // Without `-> i64` or `-> bool` the wrapper answers `vint`, so
+                // every return has to be an int: `return a < b` is a bool.
+                ((kind == "i64" || kind == "i64v" || kind == "i64_dyn" || kind == "i64v_dyn") &&
+                 !has_ret_ann &&
                  !pure_int_returns(view(fns[name].decl->body), snapshot, pnames, vvars))) {
                 fastint.erase(name);
                 fastkinds.erase(name);
@@ -1755,6 +1808,7 @@ void Emitter::compute_fast() {
         }
     }
     fboolvars.clear();
+    fboollocals.clear();
     rec_fast = drop_recursive_fast(cand);
     for (const auto &n : rec_fast) fails.insert(n);
     fast = cand;

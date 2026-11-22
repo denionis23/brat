@@ -66,7 +66,7 @@ Key design choices in the compiler:
 
 All 122 test files in `lang/tests/` compile and execute against `brat-cxx`:
 
-- `test_agreement.py` runs all 112 corpus programs in
+- `test_agreement.py` runs all 113 corpus programs in
   `lang/tests/corpus/agreement.json`.
 - Dedicated suites (`test_cxx_frontend.py`, `test_cxx_checker.py`,
   `test_cxx_borrow.py`, `test_lexer.py`, `test_front_ends_fuzz.py`,

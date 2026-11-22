@@ -1035,6 +1035,16 @@
       "asan": false,
       "from": "torture-2026-11-22",
       "note": "`v[i] = f(x)` in a function with an untyped `mut` parameter: the integer-only copy of that function called an integer-only copy of `f` that did not exist, and `f` answered its own argument in the whole program."
+    },
+    {
+      "name": "fast_fn_bool",
+      "src": "fn is_small(a: i64) { return a < 3 }\nfn f(a) {\n  let x = a < 3\n  print(x)\n  return a\n}\nfn set(mut v) {\n  v[0] = v[1] == 2\n  return 0\n}\nfn show(b) { return b }\nfn pass(a) {\n  let x = a < 3\n  return show(x)\n}\nfn main() -> i64 {\n  print(is_small(2), is_small(9))\n  print(f(1))\n  let mut w = [1, 2]\n  set(w)\n  print(w)\n  print(pass(1), pass(5), show(true))\n  return 0\n}\n",
+      "wrap": false,
+      "rc": 0,
+      "out": "true false\ntrue\n1\n[true, 2]\ntrue false true\n",
+      "asan": false,
+      "from": "torture-2026-11-22",
+      "note": "A bool is a bool in the integer-only copy of a function too: it was printed, returned, stored and passed on as `1` or `0`."
     }
   ]
 }
