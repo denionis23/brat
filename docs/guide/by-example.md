@@ -273,9 +273,16 @@ touched a: page:a -> page:c -> page:b
 `re_match`, `re_find`, `re_captures` and `re_replace` do not backtrack, so no
 pattern takes exponential time. A pattern matches characters: `.` takes a whole
 `é` and `[а-я]` is a range of letters. `\d`, `\w` and `\s` are ASCII only.
-A pattern can have at most 200 nested groups; deeper nesting raises
-`bad regex pattern`. `{4}` in a string literal is a placeholder, so a repeat
-count is written `\{4\}`:
+A pattern can have at most 200 nested groups and compiles to at most 65,536
+instructions; past either it raises `bad regex pattern`. `{4}` in a string
+literal is a placeholder, so a repeat count is written `\{4\}`. Among several
+ways to match, the first alternative and the longer repeat win, as in
+ECMAScript, and with the same rule for a repeat whose body can match nothing:
+past its minimum, `*`, `+`, `?` and `{m,n}` do not take an iteration that
+takes no character, so `re_find("b", "(a?|b)+")` is `Some('b')`. A counted
+repeat copies its body, and so does `+` over a body that can match nothing;
+nested, the copies multiply, and `+` thirteen deep over `a?` is too large. A
+group that took no part in the match is `''` in `re_captures`:
 
 ```brat run
 fn main() -> i64 {

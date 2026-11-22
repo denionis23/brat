@@ -2837,7 +2837,7 @@ static bint r_emit_tpl(RProg *g, const RInst *tpl, bint tpl_len, bint body, bint
         g->p[idx].q = tpl[k].q;
         g->p[idx].ch = tpl[k].ch;
         g->p[idx].body = tpl[k].body;
-        if (tpl[k].op == 'j' && tpl[k].x >= body && tpl[k].x <= body_end)
+        if ((tpl[k].op == 'j' || tpl[k].op == 'z') && tpl[k].x >= body && tpl[k].x <= body_end)
             g->p[idx].x = tpl[k].x + delta;
         else if (tpl[k].op == 's') {
             if (tpl[k].x >= body && tpl[k].x <= body_end) g->p[idx].x = tpl[k].x + delta;
@@ -2845,6 +2845,39 @@ static bint r_emit_tpl(RProg *g, const RInst *tpl, bint tpl_len, bint body, bint
         }
     }
     return dst;
+}
+
+/* Whether the instructions [from, to) can be passed without a character.
+   Anchors count as passable: a wrong yes only costs instructions. */
+static int r_nullable(RProg *g, bint from, bint to) {
+    bint n = to - from;
+    if (n <= 0) return 1;
+    if (n == 1 && g->p[from].op == 'c') return 0;
+    char *seen = (char *)calloc((size_t)n, 1);
+    bint *stk = (bint *)malloc(sizeof(bint) * (size_t)n);
+    if (!seen || !stk) { free(seen); free(stk); vfatal_oom(); }
+    bint sp = 0;
+    int yes = 0;
+    stk[sp++] = from;
+    seen[0] = 1;
+    while (sp > 0 && !yes) {
+        bint q = stk[--sp];
+        const RInst *in = &g->p[q];
+        bint nx[2];
+        int k = 0;
+        if (in->op == 'j') nx[k++] = in->x;
+        else if (in->op == 's') { nx[k++] = in->x; nx[k++] = in->y; }
+        else if (in->op != 'c' && in->op != 'f' && in->op != 'm') nx[k++] = q + 1;
+        for (int i = 0; i < k; i++) {
+            if (nx[i] == to) { yes = 1; break; }
+            if (nx[i] < from || nx[i] > to || seen[nx[i] - from]) continue;
+            seen[nx[i] - from] = 1;
+            stk[sp++] = nx[i];
+        }
+    }
+    free(seen);
+    free(stk);
+    return yes;
 }
 
 static int r_parse_bounds(RProg *g, bint *lo_out, bint *hi_out) {
@@ -2965,9 +2998,18 @@ static bint r_atom(RProg *g) {
     }
     if (g->err) return -1;
     bint body_end = g->n;
-    if (g->i < g->plen && g->pat[g->i] == '{') {
-        bint lo = 0, hi = 0;
-        if (!r_parse_bounds(g, &lo, &hi)) return -1;
+    /* One rule for an iteration that takes no character, the rule `*` has by
+       coming back to its own split: past the minimum it is dropped and the next
+       alternative of the body is tried, as in ECMAScript. `+`, `?` and `{m,n}`
+       took it and stopped, so `(a?|b)+` found `` in "b" where `(a?|b)*` found
+       `b`. Only a body that can match nothing pays for it. */
+    char nq = g->i < g->plen ? g->pat[g->i] : 0;
+    int nullable = (nq == '+' || nq == '?' || nq == '{') && r_nullable(g, body, body_end);
+    int plus = nullable && nq == '+';
+    if (plus || nq == '{') {
+        bint lo = 1, hi = -1;
+        if (plus) g->i++;
+        else if (!r_parse_bounds(g, &lo, &hi)) return -1;
         if (hi == 0) {
             r_truncate(g, sp);
             bint nop = r_emit(g, 'j', 0, 0);
@@ -2998,6 +3040,7 @@ static bint r_atom(RProg *g) {
             for (bint opt = 0; opt < hi - lo; opt++) {
                 bint opt_sp = r_emit(g, 's', 0, 0);
                 bint dst = r_emit_tpl(g, tpl, tpl_len, body, body_end);
+                if (nullable) r_emit(g, 'z', opt_sp, 0);
                 if (g->err) break;
                 g->p[opt_sp].x = dst;
                 g->p[opt_sp].y = g->n;
@@ -3032,6 +3075,10 @@ static bint r_atom(RProg *g) {
         g->p[sp2].x = body;
         g->p[sp2].y = g->n;
         return sp;
+    }
+    if (nullable) {
+        r_emit(g, 'z', sp, 0);
+        if (g->err) return -1;
     }
     g->p[sp].x = body;
     g->p[sp].y = g->n;
@@ -3157,6 +3204,11 @@ static void re_pike_add(RInst *p, bint pc, bint slen, bint si,
                 }
                 stk[sp].pc = q + 1; stk[sp].slot = 0; stk[sp].prev = 0; sp++;
             }
+        } else if (in->op == 'z') {
+            /* The end of an optional iteration that began at split `x`. If the
+               split was passed at this same position the iteration took no
+               character and ends here; the way around it is still open. */
+            if (!seen[in->x] && sp < stk_cap) { stk[sp].pc = q + 1; stk[sp].slot = 0; stk[sp].prev = 0; sp++; }
         } else if (in->op == 'f') {
             /* dead branch */
         } else {

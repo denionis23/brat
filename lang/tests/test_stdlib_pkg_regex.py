@@ -145,6 +145,29 @@ fn main() -> i64 {{
   assert(caps == ["2026-11-01", "2026", "11", "01"])
   let rep = re_replace("2026-11-01 & 2027-01-05", "(\\\\d\\{{4\\}})-(\\\\d\\{{2\\}})-(\\\\d\\{{2\\}})", "$3/$2/$1 ($$)")
   assert(rep == "01/11/2026 ($) & 05/01/2027 ($)")
+  // One rule for an iteration that takes no character: past the minimum of
+  // the repeat it is dropped and the next alternative is tried. `+`, `?` and
+  // a counted repeat took it and stopped, and found `` where `*` found `b`.
+  assert(unwrap(re_find("b", "(a?|b)*")) == "b" && unwrap(re_find("b", "(a?|b)+")) == "b")
+  assert(unwrap(re_find("b", "(a?|b)?")) == "b" && unwrap(re_find("b", "(a?|b)\\{{0,3\\}}")) == "b")
+  assert(re_replace("b", "(a?|b)+", "-") == "--" && re_replace("b", "(a?|b)*", "-") == "--")
+  assert(unwrap(re_find("b", "(|b)\\{{2\\}}")) == "" && re_match("", "^(a?)\\{{3\\}}$"))
+  assert(unwrap(re_find("aab", "(a*)+b")) == "aab" && unwrap(re_find("aaa", "(a*)?")) == "aaa")
+  // `+` over a body that can match nothing copies the body once, as a counted
+  // repeat does. Nested, the copies multiply: twelve levels over `a?` fit the
+  // 65,536 instructions of a pattern and fourteen are refused.
+  let mut deep = "a?"
+  for i in 0..12 {{
+    deep = "(" + deep + ")+"
+  }}
+  assert(unwrap(re_find("aaab", deep)) == "aaa")
+  let mut refused = ""
+  try {{
+    let got = re_find("aaab", "((" + deep + ")+)+")
+  }} catch e {{
+    refused = "{{e}}"
+  }}
+  assert(refused == "bad regex pattern")
 
   print("W2_STD_REGEX_OK")
   return 0
