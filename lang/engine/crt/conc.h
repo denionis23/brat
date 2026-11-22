@@ -1632,11 +1632,12 @@ struct BTask {
 };
 static BTask *g_done = 0;
 
-/* Lazy persistent pool: one OS thread per spawn segfaults around 300. It
- * starts with BPOOL_MAX threads at most and grows to BPOOL_CAP while its
- * workers wait on channels. */
+/* Lazy persistent pool. It starts with BPOOL_MAX threads at most and grows to
+ * BPOOL_CAP while its workers wait for other tasks. A waiting task keeps its
+ * thread, so the ceiling is how many tasks may wait at once with more queued:
+ * at 128 a program with 129 tasks in `recv` and the sender behind them hung. */
 #define BPOOL_MAX 32
-#define BPOOL_CAP 128
+#define BPOOL_CAP 4096
 #if defined(_WIN32)
 static HANDLE g_pool[BPOOL_CAP];
 #else
@@ -1883,6 +1884,16 @@ static void bpool_wake(void) {
 #endif
 }
 
+/* Every thread of the pool waits and no thread can be added. The queued tasks
+ * start when a waiting one ends; if those wait for the queue, the program
+ * stands still from here on. It says so once instead of hanging in silence. */
+static void bpool_full_locked(int n) {
+    static int said = 0;
+    if (said) return;
+    said = 1;
+    fprintf(stderr, "brat: %d tasks wait and the pool cannot add a thread: the queued tasks start when one of them ends\n", n);
+}
+
 /* A worker that waits on a channel waits for another task. With every worker
  * waiting that way and that task still in the queue, nothing would ever run
  * it: four tasks in `recv` and the one that sends hung on a machine with four
@@ -1890,12 +1901,13 @@ static void bpool_wake(void) {
  * costs the queue nothing. The thread stays for the rest of the run. */
 static void bpool_grow_locked(void) {
     int n = g_pool_started;
-    if (!g_q_head || g_pool_stop || n <= 0 || n >= BPOOL_CAP || g_pool_waiting < n) return;
+    if (!g_q_head || g_pool_stop || n <= 0 || g_pool_waiting < n) return;
+    if (n >= BPOOL_CAP) { bpool_full_locked(n); return; }
 #if defined(_WIN32)
     g_pool[n] = CreateThread(NULL, 0, bpool_worker, NULL, 0, NULL);
-    if (!g_pool[n]) return;
+    if (!g_pool[n]) { bpool_full_locked(n); return; }
 #else
-    if (pthread_create(&g_pool[n], NULL, bpool_worker, NULL) != 0) return;
+    if (pthread_create(&g_pool[n], NULL, bpool_worker, NULL) != 0) { bpool_full_locked(n); return; }
 #endif
     g_pool_started = n + 1;
 }
@@ -2032,7 +2044,11 @@ static void btask_run(BTask *t) {
     btask_lock();
     g_q_nleft--;
     VChan *wake = g_q_nleft == 0 ? g_ch_main : NULL;
-    VChan *cancel[BPOOL_CAP + 1];
+    /* One wait per thread that runs tasks. Until the pool has grown that is
+     * BPOOL_MAX and `main`; an array for the 4096 it may grow to would be
+     * 32 KiB in the frame of every task that a join runs inside another. */
+    VChan *few[BPOOL_MAX + 1];
+    VChan **cancel = few;
     int ncancel = 0;
     if (t->scope) {
         if (t->err) {
@@ -2046,7 +2062,13 @@ static void btask_run(BTask *t) {
         g_done = t;
     }
     if (t->err) {
-        for (VWait *w = g_waits; w && ncancel <= BPOOL_CAP; w = w->next) {
+        size_t nwait = 0;
+        for (VWait *w = g_waits; w; w = w->next) nwait++;
+        if (nwait > sizeof few / sizeof few[0]) {
+            cancel = (VChan **)malloc(nwait * sizeof *cancel);
+            if (!cancel) vfatal_oom();
+        }
+        for (VWait *w = g_waits; w; w = w->next) {
             if (vtask_failed_locked(w->t)) cancel[ncancel++] = w->c;
         }
     }
@@ -2062,6 +2084,7 @@ static void btask_run(BTask *t) {
         _vch_wake_all(cancel[i]);
         _vch_ul(cancel[i]);
     }
+    if (cancel != few) free(cancel);
 }
 
 #if defined(_WIN32)

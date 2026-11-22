@@ -766,6 +766,48 @@ POOL["join_counts_as_waiting"] = ('''fn main() -> i64 {
   return 0
 }
 ''', "done\n")
+# A task that waits keeps its thread, so the ceiling of the pool is how many
+# tasks may wait at once with more in the queue. At 128 threads this program
+# hung with 129 receivers; the ceiling is 4096 now.
+POOL["many_waiters"] = ('''fn main() -> i64 {
+  let ch = chan(4)
+  let out = chan(512)
+  scope {
+    for c in 0..300 {
+      spawn { out.send(ch.recv()) }
+    }
+    spawn {
+      for i in 0..300 { ch.send(1) }
+    }
+  }
+  let mut sum = 0
+  for i in 0..300 { sum += out.recv() }
+  print(sum)
+  return 0
+}
+''', "300\n")
+# When a task fails, the tasks of its scope that wait on a channel are woken to
+# be cancelled, channel by channel. Here 200 wait, each on a channel of its
+# own: more than the list in the frame of the failed task holds, so the list
+# comes from the heap. Woken short of all of them, the scope would never end.
+POOL["failed_task_wakes_every_waiter"] = ('''fn main() -> i64 {
+  try {
+    scope {
+      for i in 0..200 {
+        spawn {
+          let own = chan(1)
+          let x = own.recv()
+        }
+      }
+      spawn { raise("boom") }
+    }
+  } catch e {
+    print(e)
+  }
+  print("done")
+  return 0
+}
+''', "boom\ndone\n")
 for name, (src, want) in POOL.items():
     path, _ = build(src, name)
     exe = os.path.join(TMP, name + ".exe")
@@ -780,6 +822,47 @@ for name, (src, want) in POOL.items():
             raise AssertionError("%s hangs with BRAT_THREADS=%s" % (name, threads))
         assert seen.returncode == 0 and seen.stdout == want, "%s BRAT_THREADS=%s rc=%d %r" % (
             name, threads, seen.returncode, seen.stdout + seen.stderr)
+
+# A task that a join runs inside another task costs the stack its own frames
+# need. With the ceiling at 4096 the frame of each held an array of 4097
+# channels, 32 KiB, where the stack check allows 256 KiB for 64 frames: on a
+# stack of 1 MiB a nest of 40 scopes ended in SIGSEGV. The array holds
+# BPOOL_MAX + 1 now and the rest, when there is a rest, comes from the heap.
+if os.name != "nt":
+    import resource
+
+    def one_mib_stack():
+        hard = resource.getrlimit(resource.RLIMIT_STACK)[1]
+        resource.setrlimit(resource.RLIMIT_STACK, (1 << 20, hard))
+
+    path, _ = build('''fn nest(n: i64, out) {
+  if n == 0 {
+    out.send(0)
+    return
+  }
+  let c = chan(1)
+  scope {
+    spawn { nest(n - 1, c) }
+  }
+  out.send(c.recv() + 1)
+}
+fn main() -> i64 {
+  let out = chan(1)
+  nest(100, out)
+  print(out.recv())
+  return 0
+}
+''', "nested_joins_small_stack")
+    exe = os.path.join(TMP, "nested_joins_small_stack.exe")
+    built = subprocess.run(_cxx.cli_args("build", path, "-o", exe),
+                           capture_output=True, text=True, timeout=300)
+    assert built.returncode == 0, "nested joins build: %r" % ((built.stdout + built.stderr)[-800:])
+    for threads in ("1", "2", "4", "7"):
+        seen = subprocess.run([exe], capture_output=True, text=True, timeout=30,
+                              preexec_fn=one_mib_stack,
+                              env=dict(os.environ, BRAT_THREADS=threads))
+        assert seen.returncode == 0 and seen.stdout == "100\n", "nested joins BRAT_THREADS=%s rc=%d %r" % (
+            threads, seen.returncode, seen.stdout + seen.stderr)
 
 # With no `try` around the `recv` the program ends as it does for any error
 # nobody caught.
