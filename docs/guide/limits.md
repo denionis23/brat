@@ -68,11 +68,15 @@ of stack is left, so a large budget ends in an error and not in a crash. `print`
 
 ## Nesting in source
 
-The parser refuses a block or a parenthesized expression nested 200 levels deep
-(`block nested too deeply`, `expression nested too deeply`) and an expression
-tree more than 1000 levels tall (`expression tree too deep`), which a chain such
-as `1 + 1 + ... + 1` reaches at about 1000 operators. Every later pass walks the
-tree recursively, and these bounds keep that inside an 8 MiB stack.
+The parser refuses a block, a parenthesized expression, a pattern or a type
+nested 200 levels deep (`block nested too deeply`, `expression nested too
+deeply`, `pattern nested too deeply`, `type nested too deeply`) and an
+expression tree more than 1000 levels tall (`expression tree too deep`). A
+chain such as `1 + 1 + ... + 1` or `- - - x` reaches that at about 1000
+operators, a chain of `else if` at about 500 branches and a `match` at about
+1000 arms. A `match` arm without braces counts as a block. Every pass walks
+the tree recursively, the parser included, and these bounds keep that inside
+an 8 MiB stack.
 
 ## Signed 64-bit wrapping integers
 

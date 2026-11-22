@@ -985,7 +985,10 @@ private:
     std::optional<StmtP> else_block() {
         if (!at("else")) return std::nullopt;
         step();
-        if (at("if")) return mk_block(if_stmt());
+        if (at("if")) {
+            Tall link(*this);
+            return mk_block(if_stmt());
+        }
         want("{");
         auto b = block();
         want("}");
@@ -1861,6 +1864,7 @@ private:
     }
 
     PatP pat_arg() {
+        Depth guard(*this, "pattern");
         const Tok c = peek();
         if (c.kind == TK::Id && c.text == "_") {
             step();
@@ -2139,6 +2143,8 @@ private:
                 arm.body = block();
                 want("}");
             } else {
+                // `1 => match a { 1 => match a { ...`: a block in all but its braces.
+                Depth guard(*this, "block");
                 arm.body = stmt();
                 if (arms_return && arm.body.size() == 1 && arm.body[0]->k == SK::Expr)
                     arm.body[0]->k = SK::Return;
@@ -2390,6 +2396,35 @@ private:
     int nest_expr_ = 0;
     int nest_block_ = 0;
 
+    // A chain that no bracket bounds: `- - - x`, `!!!x`, `move move x`, `else if`
+    // after `else if`. The parser recurses once per link and the tree check
+    // above runs when it is back, so 50,000 minus signs were a SIGSEGV here and
+    // not an error there. No chain it refuses would have passed that check.
+    int tall_ = 0;
+    struct Tall {
+        Parser &p;
+        explicit Tall(Parser &self) : p(self) {
+            if (++p.tall_ > static_cast<int>(kMaxTreeDepth)) {
+                p.fail("expression tree too deep (limit " + std::to_string(kMaxTreeDepth) + ")", p.line());
+            }
+        }
+        ~Tall() { --p.tall_; }
+    };
+
+    // A type nests with brackets, and nothing bounded it: 20,000 levels of
+    // `vec[` overflowed the stack of the checker.
+    std::optional<std::string> ann_text(const std::vector<std::string> &toks) const {
+        int depth = 0;
+        for (const std::string &t : toks) {
+            if (t == "[" || t == "(") {
+                if (++depth > kMaxNest) fail("type nested too deeply");
+            } else if (t == "]" || t == ")") {
+                depth--;
+            }
+        }
+        return ::ann_text(toks);
+    }
+
     // `break` and `continue` leave the innermost loop of the function being
     // parsed: a loop counts one up, a function body starts again at zero.
     int loops_ = 0;
@@ -2532,10 +2567,12 @@ private:
         std::string_view t = peek().text;
         if (t == "&") {
             step();
+            Tall link(*this);
             return mk_un("&", un_expr());
         }
         if (t == "!" || t == "-" || t == "~") {
             step();
+            Tall link(*this);
             // The digits of the minimum do not fit on their own. A literal with
             // something after it (`.`, `[`, `(`, `?`) goes the usual way.
             if (t == "-" && peek().kind == TK::Num && !next_is(".") && !next_is("[") &&
@@ -2552,6 +2589,7 @@ private:
         }
         if (peek().kind == TK::Kw && t == "move") {
             step();
+            Tall link(*this);
             return mk_move(un_expr());
         }
         return post_expr();

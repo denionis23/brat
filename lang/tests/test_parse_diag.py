@@ -30,6 +30,24 @@ CASES = {
     "too_deep_expr": "fn main() -> i64 {\n  let a = 1\n  let b = 2\n  let x = %s1%s\n  return 0\n}\n"
                      % ("(" * 300, ")" * 300),
     "too_deep_block": "fn main() -> i64 {\n%s\n  return 0\n}\n" % ("if true {\n" * 300),
+    # Nesting that no bracket bounds. The parser recurses once per level and
+    # the check on the height of the tree ran after it, so each of these was a
+    # SIGSEGV of the compiler and not an error: 50,000 minus signs, 20,000
+    # `else if`, 20,000 levels of a pattern or of a type. The last two are how
+    # deep each may go.
+    "too_deep_unary": "fn main() -> i64 {\n  let x = %s1\n  return x\n}\n" % ("- " * 60000),
+    "too_deep_not": "fn main() -> i64 {\n  let x = %strue\n  return 0\n}\n" % ("!" * 60000),
+    "too_deep_move": "fn main() -> i64 {\n  let y = [1]\n  let x = %sy\n  return 0\n}\n" % ("move " * 60000),
+    "too_deep_else_if": "fn f(a: i64) -> i64 {\n  if a == 0 { return 0 }%s\n  return 1\n}\n"
+                        % "".join("\n  else if a == %d { return %d }" % (i, i) for i in range(1, 30000)),
+    "too_deep_pattern": "fn main() -> i64 {\n  let v = Some(1)\n  match v {\n    %sy%s => { print(y) },\n"
+                        "    _ => { print(0) },\n  }\n  return 0\n}\n" % ("Some(" * 30000, ")" * 30000),
+    "too_deep_arm": "fn f(a: i64) -> i64 {\n  return %s7%s\n}\n" % ("match a { 1 => " * 30000, ", _ => 0 }" * 30000),
+    "too_deep_type": "fn f(x: %si64%s) -> i64 {\n  return 1\n}\n" % ("vec[" * 30000, "]" * 30000),
+    "too_deep_type_let": "fn main() -> i64 {\n  let x: %si64%s = {}\n  return 0\n}\n" % ("map[str, " * 30000, "]" * 30000),
+    "deep_pattern_ok": "fn main() -> i64 {\n  let v = Some(1)\n  match v {\n    %sy%s => { print(y) },\n"
+                       "    _ => { print(0) },\n  }\n  return 0\n}\n" % ("Some(" * 150, ")" * 150),
+    "deep_type_ok": "fn f(x: %si64%s) -> i64 {\n  return 1\n}\n" % ("vec[" * 150, "]" * 150),
     # An extern result had no body or required semicolon to end it, and the
     # collector kept reading: `-> bool` before `print(...)` became the
     # unsupported type `boolprint(...)`, hiding the real line-2 type error.
@@ -97,6 +115,16 @@ WANT = {
     "double_op": "1: error: stuck at '+' at line 1",
     "too_deep_expr": "4: error: expression nested too deeply at line 4",
     "too_deep_block": "202: error: block nested too deeply at line 202",
+    "too_deep_unary": "2: error: expression tree too deep (limit 1000) at line 2",
+    "too_deep_not": "2: error: expression tree too deep (limit 1000) at line 2",
+    "too_deep_move": "3: error: expression tree too deep (limit 1000) at line 3",
+    "too_deep_else_if": "1003: error: expression tree too deep (limit 1000) at line 1003",
+    "too_deep_pattern": "4: error: pattern nested too deeply at line 4",
+    "too_deep_arm": "2: error: block nested too deeply at line 2",
+    "too_deep_type": "1: error: type nested too deeply at line 1",
+    "too_deep_type_let": "2: error: type nested too deeply at line 2",
+    "deep_pattern_ok": None,
+    "deep_type_ok": None,
     "extern_result_before_expr": "2: error: arg 1 of `flip`: want bool, got i64",
     "extern_result_same_line_expr": None,
     "extern_result_generic_before_expr": "1: error: unsupported FFI type `vec[i64]` as the result of extern fn `f`",
