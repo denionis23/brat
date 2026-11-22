@@ -1055,6 +1055,16 @@
       "asan": false,
       "from": "torture-2026-11-22",
       "note": "A call that leaves a parameter to its default: the integer-only copy of the callee was called with too few arguments and the C did not compile."
+    },
+    {
+      "name": "global_read_before_call",
+      "src": "fn mk(i: i64) -> str { return \"heap-string-number-\" + str(i) }\nlet mut n = 1\nlet mut gs = mk(7)\nlet mut gv = [mk(1), mk(2)]\nfn bump() -> i64 {\n  n = n + 10\n  return 0\n}\nfn app() -> str {\n  gs = gs + \"more-more-more-more\"\n  gv = [mk(8)]\n  return \"!\"\n}\nfn main() -> i64 {\n  print(n + bump())\n  n = 1\n  print(n - bump(), n)\n  n = 1\n  print(n < bump(), n)\n  n = 1\n  n += bump()\n  print(n)\n  print(gs, app())\n  gs = mk(7)\n  print(gs + app())\n  gs = mk(7)\n  gv = [mk(1), mk(2)]\n  print(gv, app(), gv)\n  return 0\n}\n",
+      "wrap": false,
+      "rc": 0,
+      "out": "1\n1 11\nfalse 11\n1\nheap-string-number-7 !\nheap-string-number-7!\n['heap-string-number-1', 'heap-string-number-2'] ! ['heap-string-number-8']\n",
+      "asan": true,
+      "from": "torture-2026-11-22",
+      "note": "A global is read where it stands, before a call to its right that assigns it: `n + bump()` added the new `n`, and `print(g, f())` printed a string `f` had freed."
     }
   ]
 }

@@ -1041,6 +1041,8 @@ struct Emitter {
     std::string var_ref(const std::string &name);
     std::optional<std::string> place_root(const Expr &e);
     bool moves_owned_local(const Expr &e) const;
+    bool global_read(const Expr &e) const;
+    bool runs_code(const Expr &e) const;
     std::string keep(const Expr &e, const std::string &val);
     std::string own_operand(const Expr &e, const std::string &val);
     std::string truth(const Expr &e, const std::string &val, std::vector<std::string> &lines);
@@ -3482,6 +3484,15 @@ V Emitter::ex_bin(const Expr &e) {
                (k == EK::VecLit || k == EK::MapLit || k == EK::StructLit);
     };
     hold(*e.kids[0], a.val);
+    // The left operand is read before the right one runs, also when it is a
+    // global the right one assigns: it is read here and kept until the result
+    // exists.
+    if (global_read(*e.kids[0]) && runs_code(*e.kids[1])) {
+        std::string t = new_tmp("v");
+        pre.push_back(cat("Val ", t, " = vrc_inc(", a.val, ");"));
+        a.val = t;
+        drops.push_back(t);
+    }
     std::vector<std::string> lhs_err = drops;
     if (is_lit_ctr(*e.kids[0], a.val)) lhs_err.push_back(a.val);
     if (!a.pre.empty() && may_raise(*e.kids[0])) pre.push_back(err_check_line(lhs_err));
@@ -5603,6 +5614,21 @@ bool Emitter::moves_owned_local(const Expr &e) const {
     if (e.k != EK::Move || e.kids.empty() || e.kids[0]->k != EK::Var) return false;
     auto it = sym.find(e.kids[0]->a);
     return it != sym.end() && it->second.own == Own::Owned;
+}
+
+// A bare global is read where it is used and holds no count of its own. A call
+// evaluated after it may assign the global, and that frees what was read:
+// `print(g, f())` printed a freed string, `n + f()` added the new `n`.
+bool Emitter::global_read(const Expr &e) const {
+    return e.k == EK::Var && global_lets.count(e.a) && !dfb_locals.count(e.a) &&
+           !ub_ints.count(e.a) && !ub_floats.count(e.a) && !cur_params.count(e.a);
+}
+
+bool Emitter::runs_code(const Expr &e) const {
+    if (e.k == EK::Call || e.k == EK::MCall) return true;
+    for (const auto &k : e.kids)
+        if (k && runs_code(*k)) return true;
+    return false;
 }
 
 std::string Emitter::keep(const Expr &e, const std::string &val) {
@@ -10194,14 +10220,20 @@ V Emitter::ex_call(const Expr &e) {
         // before it ride in `call_cleanup` until the line is out.
         std::vector<std::string> pre_all, parts, mine;
         CleanupGuard guard{call_cleanup, call_cleanup.size()};
-        for (const Expr *a : args) {
+        for (size_t ai = 0; ai < args.size(); ai++) {
+            const Expr *a = args[ai];
             V v = ex(*a);
             for (auto &p : v.pre) pre_all.push_back(p);
             std::string t = new_tmp("p");
-            pre_all.push_back(cat("Val ", t, " = (", v.val, ");"));
+            // A global stays this argument's until the line is out, whatever a
+            // later argument assigns.
+            bool kept = false;
+            for (size_t aj = ai + 1; aj < args.size() && !kept; aj++)
+                kept = global_read(*a) && runs_code(*args[aj]);
+            pre_all.push_back(cat("Val ", t, " = ", kept ? "vrc_inc(" : "(", v.val, ");"));
             pre_all.push_back(err_check_line());
             parts.push_back(t);
-            if (dec_able(*a, heap_returns()) || moves_owned_local(*a)) {
+            if (kept || dec_able(*a, heap_returns()) || moves_owned_local(*a)) {
                 mine.push_back(t);
                 call_cleanup.push_back(t);
             }
