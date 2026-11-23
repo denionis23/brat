@@ -1,5 +1,6 @@
 // Intraprocedural ownership, move, and borrow checker.
 // Preserves deterministic check and declaration ordering for `warns` and `errs`.
+#include <functional>
 #include "borrow.h"
 
 #include "builtins.h"
@@ -626,6 +627,27 @@ std::vector<std::string> borrow_srcs(const Expr *e, const Decls &decl, FnTable &
                 if (ix < e->kids.size())
                     add_unique(out, borrow_srcs(e->kids[ix].get(), decl, funcs));
             return out;
+        }
+        auto pit = funcs.param_ret.find(e->a);
+        if (pit != funcs.param_ret.end()) {
+            for (size_t ix : pit->second)
+                if (ix < e->kids.size())
+                    add_unique(out, borrow_srcs(e->kids[ix].get(), decl, funcs));
+            return out;
+        }
+        auto fit = funcs.field_ret.find(e->a);
+        if (fit != funcs.field_ret.end()) {
+            for (const auto &[ix, field] : fit->second) {
+                if (ix >= e->kids.size()) continue;
+                auto base = infer_expr_ann(e->kids[ix].get(), decl, &funcs);
+                if (!base) continue;
+                auto sit = funcs.struct_fields.find(*base);
+                if (sit == funcs.struct_fields.end()) continue;
+                auto ft = sit->second.find(field);
+                if (ft == sit->second.end() || is_copy_scalar_ann(trim_ann(ft->second))) continue;
+                add_unique(out, borrow_srcs(e->kids[ix].get(), decl, funcs));
+            }
+            if (!out.empty()) return out;
         }
         if (e->a == "ptr_offset" && !e->kids.empty() &&
             is_borrowed_ptr_expr(e->kids[0].get(), decl, funcs)) {
@@ -2762,6 +2784,43 @@ void scan_type_names_expr(const Expr &e, FnTable &funcs) {
     }
 }
 
+void each_return(const FnDecl &f, const std::function<void(const Expr &)> &visit) {
+    std::function<void(const Stmt *)> one = [&](const Stmt *st) {
+        if (!st || st->k == SK::Fn || st->k == SK::ExportFn) return;
+        if (st->k == SK::Return && st->e1) visit(*st->e1);
+        for (const auto &c : st->body) one(c.get());
+        for (const auto &c : st->body2) one(c.get());
+        one(st->els.get());
+    };
+    for (const auto &sp : f.body) one(sp.get());
+}
+
+std::optional<size_t> ref_param(const FnDecl &f, const Expr &e) {
+    if (e.k != EK::Var) return std::nullopt;
+    for (size_t i = 0; i < f.params.size(); i++) {
+        const Param &p = f.params[i];
+        if (p.name == e.a && p.mode == Mode::Ref && !(p.ann && has_copy_ann(p.ann))) return i;
+    }
+    return std::nullopt;
+}
+
+std::vector<size_t> returned_params(const FnDecl &f) {
+    std::set<size_t> found;
+    each_return(f, [&](const Expr &e) {
+        if (auto i = ref_param(f, e)) found.insert(*i);
+    });
+    return std::vector<size_t>(found.begin(), found.end());
+}
+
+std::vector<std::pair<size_t, std::string>> returned_fields(const FnDecl &f) {
+    std::set<std::pair<size_t, std::string>> found;
+    each_return(f, [&](const Expr &e) {
+        if (e.k != EK::Field || e.kids.empty()) return;
+        if (auto i = ref_param(f, *e.kids[0])) found.insert({*i, e.b});
+    });
+    return std::vector<std::pair<size_t, std::string>>(found.begin(), found.end());
+}
+
 const Stmt *pub_inner(const Stmt &s) {
     if (s.k == SK::Pub && !s.body.empty()) return s.body[0].get();
     return &s;
@@ -3108,6 +3167,10 @@ BorrowOut borrow_check(const std::vector<StmtP> &body,
         if (node->k == SK::Fn || node->k == SK::ExportFn) {
             const FnDecl &f = node->fns[0];
             funcs.sigs[f.name.value_or("")] = fn_modes(f.params);
+            auto pr = returned_params(f);
+            if (f.name && !pr.empty()) funcs.param_ret[*f.name] = std::move(pr);
+            auto fr = returned_fields(f);
+            if (f.name && !fr.empty()) funcs.field_ret[*f.name] = std::move(fr);
         } else if (node->k == SK::Extern) {
             funcs.sigs[node->ext.name] = fn_modes(node->ext.params);
             auto bix = extern_borrows_indices(node->ext);

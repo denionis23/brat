@@ -30,7 +30,7 @@
 #include <unistd.h>
 #endif
 
-#include "lsp_wire.h"
+#include "json_wire.h"
 #include "module.h"
 #include "parser.h"
 
@@ -38,7 +38,7 @@ namespace {
 
 std::string json_quote(std::string_view value) {
     std::string out;
-    lsp_wire::JsonWriter::write_escaped_string(out, value);
+    json_wire::JsonWriter::write_escaped_string(out, value);
     return out;
 }
 

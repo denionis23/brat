@@ -12,21 +12,21 @@ if not CC:
     _skip.skip("no C++ compiler for the JSON wire regression")
 
 HARNESS = r'''
-#include "lsp_wire.h"
+#include "json_wire.h"
 #include <iostream>
 #include <string>
 #include <vector>
 
 int main() {
-    lsp_wire::LspJsonTape empty_tape;
+    json_wire::JsonTape empty_tape;
     int failures = 0;
     if (!empty_tape.is_null(0) || empty_tape.is_object(0) || empty_tape.is_object(999) ||
-        empty_tape.at(0).kind != lsp_wire::JKind::Null ||
-        empty_tape.at(999).kind != lsp_wire::JKind::Null) {
-        std::cerr << "unparsed LspJsonTape sentinel failed\n";
+        empty_tape.at(0).kind != json_wire::JKind::Null ||
+        empty_tape.at(999).kind != json_wire::JKind::Null) {
+        std::cerr << "unparsed JsonTape sentinel failed\n";
         ++failures;
     }
-    lsp_wire::LspJsonTape tape;
+    json_wire::JsonTape tape;
     const std::vector<std::string> invalid = {
         "\xff", "\x80", "\xc0\xaf", "\xc1\xbf", "\xc2", "\xe2\x82",
         "\xe2\x28\xa1", "\xe0\x80\xaf", "\xed\xa0\x80", "\xed\xbf\xbf",
@@ -70,5 +70,5 @@ with tempfile.TemporaryDirectory(prefix="brat-wire-utf8-") as tmp:
     if os.environ.get("BRAT_WIRE_SANITIZE") == "1":
         flags += ["-fsanitize=address,undefined", "-fno-omit-frame-pointer"]
     subprocess.run([CC, *flags, "-I", str(SRC), str(harness),
-                    str(SRC / "lsp_wire.cpp"), "-o", str(binary)], check=True, timeout=120)
+                    str(SRC / "json_wire.cpp"), "-o", str(binary)], check=True, timeout=120)
     subprocess.run([str(binary)], check=True, timeout=30)

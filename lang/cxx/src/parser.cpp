@@ -2568,11 +2568,13 @@ private:
         if (t == "&") {
             step();
             Tall link(*this);
+            Depth nest(*this, "expression");
             return mk_un("&", un_expr());
         }
         if (t == "!" || t == "-" || t == "~") {
             step();
             Tall link(*this);
+            Depth nest(*this, "expression");
             // The digits of the minimum do not fit on their own. A literal with
             // something after it (`.`, `[`, `(`, `?`) goes the usual way.
             if (t == "-" && peek().kind == TK::Num && !next_is(".") && !next_is("[") &&
@@ -2590,6 +2592,7 @@ private:
         if (peek().kind == TK::Kw && t == "move") {
             step();
             Tall link(*this);
+            Depth nest(*this, "expression");
             return mk_move(un_expr());
         }
         return post_expr();

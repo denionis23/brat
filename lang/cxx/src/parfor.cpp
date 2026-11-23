@@ -252,12 +252,17 @@ std::vector<std::string> outer_writes(const View &body, const std::set<std::stri
                 });
             }
             for (const Expr *e : {s.e1.get(), s.e2.get(), s.e3.get()}) walk_expr(e, scope);
-            std::set<std::string> b1 = scope, b2 = scope;
-            if ((s.k == SK::ForRange || s.k == SK::ForIter) && !s.a.empty()) b1.insert(s.a);
-            if (s.k == SK::Try && s.opt1 && !s.opt1->empty()) b2.insert(*s.opt1);
-            walk_block(view(s.body), std::move(b1));
-            walk_block(view(s.body2), std::move(b2));
-            walk_block(else_of(s), scope);
+            if (!s.body.empty()) {
+                std::set<std::string> b1 = scope;
+                if ((s.k == SK::ForRange || s.k == SK::ForIter) && !s.a.empty()) b1.insert(s.a);
+                walk_block(view(s.body), std::move(b1));
+            }
+            if (!s.body2.empty()) {
+                std::set<std::string> b2 = scope;
+                if (s.k == SK::Try && s.opt1 && !s.opt1->empty()) b2.insert(*s.opt1);
+                walk_block(view(s.body2), std::move(b2));
+            }
+            if (View other = else_of(s); !other.empty()) walk_block(other, scope);
             for (const auto &f : s.fns) {
                 std::set<std::string> fs = scope;
                 for (const auto &p : f.params) fs.insert(p.name);

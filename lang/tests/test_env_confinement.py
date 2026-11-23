@@ -1,4 +1,4 @@
-"""Filesystem/SQLite confinement, resource budgets, arena internals, string borrow tracking, and LSP/MCP limits.
+"""Filesystem/SQLite confinement, resource budgets, arena internals, string borrow tracking, and MCP limits.
 
 Covers:
   - ILP32 Vec/Map checked capacity multiply, 64 MiB read_file cap, 16 MiB read_bytes & utf8_bytes caps.
@@ -11,7 +11,6 @@ Covers:
   - Cumulative dependency graph archive/extracted/file/index budgets.
   - MCP 2 MiB streaming output cap and timeout process-group kill.
   - SQLite generation handles, concurrent op/close safety, and sql_query row/column/blob/byte caps.
-  - LSP 16 MiB frame/doc cap, 1M JSON node cap, JSON-RPC 2.0 (-32600) envelope check, and 2048 open-doc cap.
   - proc_run timeout_ms / std.proc.run_timeout / BRAT_PROC_TIMEOUT_MS and process-group kill.
   - Aggregate channel slot budget and reclamation on close.
   - Refcounted heap sbuf (>63 builders, ASan leak-free, Unicode codepoint len).
@@ -499,62 +498,6 @@ def test_r308_r310_r311_chan_budget_sbuf_and_env():
     assert rc2 == 0 and out2.strip().lower() == "pub_denied=true"
 
 
-def _lsp_frame(obj):
-    raw = json.dumps(obj).encode("utf-8")
-    return b"Content-Length: %d\r\n\r\n" % len(raw) + raw
-
-
-def test_r304_lsp_caps_and_jsonrpc_envelope():
-    # 1. Invalid JSON-RPC envelope (jsonrpc != "2.0") returns -32600 Invalid Request
-    bad_req = _lsp_frame({"jsonrpc": "1.0", "id": 1, "method": "initialize", "params": {}})
-    shut = (
-        _lsp_frame({"jsonrpc": "2.0", "id": 2, "method": "initialize", "params": {"capabilities": {}}})
-        + _lsp_frame({"jsonrpc": "2.0", "id": 3, "method": "shutdown"})
-        + _lsp_frame({"jsonrpc": "2.0", "method": "exit"})
-    )
-    r = run_cmd([CXX, "lsp"], input_bytes=bad_req + shut, timeout=15)
-    assert r.returncode == 0
-    assert b"-32600" in r.stdout, f"expected -32600 Invalid Request in LSP stdout: {r.stdout[:400]!r}"
-
-    # 2. >16 MiB Content-Length header cleanly closes/rejects without allocating >16 MiB
-    over_hdr = b"Content-Length: 17000000\r\n\r\n{}"
-    r2 = run_cmd([CXX, "lsp"], input_bytes=over_hdr, timeout=10)
-    assert r2.returncode != 0 or b"-32600" in r2.stdout or r2.stdout == b""
-
-    # 3. JSON token bomb (>1,048,576 nodes inside <3 MiB frame) rejected cleanly without OOM
-    bomb_body = b'{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"x":[' + b"0," * 1050000 + b"0]}}"
-    bomb_frame = (b"Content-Length: %d\r\n\r\n" % len(bomb_body)) + bomb_body
-    r3 = run_cmd([CXX, "lsp"], input_bytes=bomb_frame, timeout=15)
-    assert b"-32700" in r3.stdout or r3.returncode != 0
-
-    # 4. Incremental didChange growing document past 16 MiB is rejected cleanly
-    big_chunk = "a" * (9 * 1024 * 1024)
-    inc_stream = (
-        _lsp_frame({"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {"capabilities": {}}})
-        + _lsp_frame({
-            "jsonrpc": "2.0",
-            "method": "textDocument/didOpen",
-            "params": {"textDocument": {"uri": "file:///tmp/inc16.brat", "languageId": "brat", "version": 1, "text": big_chunk}},
-        })
-        + _lsp_frame({
-            "jsonrpc": "2.0",
-            "method": "textDocument/didChange",
-            "params": {
-                "textDocument": {"uri": "file:///tmp/inc16.brat", "version": 2},
-                "contentChanges": [{
-                    "range": {"start": {"line": 0, "character": 0}, "end": {"line": 0, "character": 0}},
-                    "text": big_chunk,
-                }],
-            },
-        })
-        + _lsp_frame({"jsonrpc": "2.0", "id": 2, "method": "shutdown"})
-        + _lsp_frame({"jsonrpc": "2.0", "method": "exit"})
-    )
-    r4 = run_cmd([CXX, "lsp"], input_bytes=inc_stream, timeout=15)
-    assert r4.returncode == 0
-    assert b"document exceeds 16 MiB limit" in r4.stdout, f"missing 16 MiB log error: {r4.stdout[:400]!r}"
-
-
 def test_r306_r307_f03_f04_mcp_cc_timeout_and_pkg_budgets():
     td = _scratch.mkdtemp(prefix="brat-subproc-pkg")
     # 1. Native `brat-cxx mcp` caps oversized tool stdout (>2 MiB) cleanly
@@ -808,8 +751,6 @@ def main():
     print("ok: (proc_run timeout_ms + process-group tree kill)")
     test_r308_r310_r311_chan_budget_sbuf_and_env()
     print("ok: (channel budget + refcounted sbuf + env_get policy)")
-    test_r304_lsp_caps_and_jsonrpc_envelope()
-    print("ok: (LSP 16 MiB cap + 1M JSON token cap + -32600 JSON-RPC envelope)")
     test_r306_r307_f03_f04_mcp_cc_timeout_and_pkg_budgets()
     print("ok: (MCP 2 MiB cap + CC timeout + pkg graph cap + MinGW)")
     test_dynamic_backend_missing_symbols_fail_closed()

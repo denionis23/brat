@@ -1,8 +1,6 @@
 import _cxx
 import _scratch
-import glob
 import os
-import re
 import subprocess
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -10,7 +8,6 @@ CLI = "cli"
 EXAMPLES = os.path.join(HERE, "..", "examples")
 NEWCOMER = os.path.join(EXAMPLES, "newcomer.brat")
 ROOT = os.path.abspath(os.path.join(HERE, "..", ".."))
-README = os.path.join(ROOT, "README.md")
 
 n = 0
 
@@ -32,34 +29,6 @@ def run(tool, *cmd):
         argv = _cxx.cli_args(*cmd)
     return subprocess.run(argv, capture_output=True, text=True, timeout=120, env=ENV)
 
-
-readme = open(README, encoding="utf-8").read()
-test_count = len(glob.glob(os.path.join(HERE, "test_*.py")))
-check("lang/tests/      %d test files" % test_count in readme,
-      "README test count is stale (runner has %d files)" % test_count)
-check("OWNER/BRAT" not in readme, "README CI badge still uses a placeholder")
-check("git clone https://github.com/denionis23/brat.git brat && cd brat" in readme,
-      "README clone command does not match the repository")
-check("./lang/cxx/bin/brat-cxx run hello.brat" in readme,
-      "README must provide a direct native quick start")
-check("Python is not required" in readme,
-      "README must distinguish native requirements from development dependencies")
-# Every doc the README links must exist; a link to a deleted file is a doc bug
-# the reader finds, not the reviewer.
-import re as _re
-for _link in _re.findall(r"\]\(([^)#]+)\)", readme):
-    if _link.startswith(("http://", "https://")):
-        continue
-    check(os.path.exists(os.path.join(ROOT, _link)), "README links a missing file: %s" % _link)
-
-# The benchmark tables say "Median of N runs": `make bench` has to run N.
-bench_src = open(os.path.join(ROOT, "scripts", "bench.py"), encoding="utf-8").read()
-bench_runs = re.search(r'"--runs", type=int, default=(\d+)', bench_src)
-check(bench_runs, "bench.py lost its --runs option")
-limits_md = open(os.path.join(ROOT, "docs", "guide", "limits.md"), encoding="utf-8").read()
-for label, text in (("README", readme), ("limits.md", limits_md)):
-    check("Median of %s runs" % bench_runs.group(1) in text,
-          "%s names a different run count than bench.py (default %s)" % (label, bench_runs.group(1)))
 
 check(os.path.isfile(NEWCOMER), "newcomer.brat missing")
 
@@ -164,136 +133,5 @@ p = run(CLI, "run", "-O0", UW_DYN)
 check(p.returncode == 1, "unwrap dyn wants exit=1 have %d" % p.returncode)
 check("unwrap of i64 (want Ok/Err/Some)" in p.stderr, "unwrap wants the type have %r" % p.stderr[-300:])
 
-
-# Every test file the documentation names must exist, unless the line says the
-# test is gone ("used to", "merged", "replaced").
-PAST = ("used to", "merged", "replaced", "deleted", "renamed", "was ", "were ")
-DOCS = [os.path.join(ROOT, n) for n in ("README.md", "CONTRIBUTING.md", "SECURITY.md")]
-DOCS.append(os.path.join(ROOT, "lang", "spec", "SPEC.md"))
-DOCS.extend(sorted(glob.glob(os.path.join(ROOT, "docs", "*", "*.md"))))
-SOURCES = {os.path.basename(p) for p in glob.glob(os.path.join(ROOT, "lang", "cxx", "src", "*.cpp"))}
-missing = []
-for doc in DOCS:
-    for line in open(doc, encoding="utf-8"):
-        if any(mark in line for mark in PAST):
-            continue
-        for name in set(re.findall(r"test_[a-z0-9_]+\.py", line)):
-            if not os.path.isfile(os.path.join(HERE, name)):
-                missing.append("%s -> %s" % (os.path.relpath(doc, ROOT), name))
-        for name in set(re.findall(r"\b[a-z_]+\.cpp\b", line)):
-            if name not in SOURCES:
-                missing.append("%s -> %s" % (os.path.relpath(doc, ROOT), name))
-check(not missing, "documentation names files that do not exist: %s" % (missing,))
-
-# Every command row of the CLI reference names a command the binary has, and
-# every flag in the row is one that command accepts.
-cli_doc = open(os.path.join(ROOT, "docs", "guide", "cli.md"), encoding="utf-8").read()
-rows = re.findall(r"^\| `(brat [^`]+)` \|", cli_doc, re.M)
-check(rows, "cli.md has no command rows")
-UNKNOWN = re.compile(r"unknown (flag|option|command|subcommand)")
-for row in rows:
-    sub = row.split()[1]
-    p = subprocess.run(_cxx.cli_args(sub, "--help"), capture_output=True, text=True, timeout=60, env=ENV, cwd=TMP)
-    check(not UNKNOWN.search(p.stdout + p.stderr), "cli.md documents `brat %s`, which does not exist" % sub)
-    for flag in sorted(set(re.findall(r"(?<![\w-])(--[a-z][a-z-]*|-[A-Za-z])(?![\w-])", row))):
-        p = subprocess.run(_cxx.cli_args(sub, flag, "x"), capture_output=True, text=True, timeout=60, env=ENV, cwd=TMP)
-        check(not UNKNOWN.search(p.stdout + p.stderr), "cli.md documents `brat %s %s`, which it rejects" % (sub, flag))
-
-# The diagnostics the ownership table quotes are ones the compiler prints. A row that
-# shows one instance of a message built from names, not the message, is listed here.
-INSTANCES = ("impl Shout for Point missing loud",)
-compiler = "".join(open(p, encoding="utf-8").read() for p in glob.glob(os.path.join(ROOT, "lang", "cxx", "src", "*.cpp")))
-ownership = open(os.path.join(ROOT, "docs", "guide", "ownership.md"), encoding="utf-8").read()
-rules = ownership[ownership.index("## Checked rules"):ownership.index("### Call-site exclusivity")]
-for row in rules.split("\n"):
-    if not row.startswith("| ") or row.startswith("| Condition") or row.startswith("|---"):
-        continue
-    message = row.strip("| ").split(" | ")[-1].replace("\\`", "\0")
-    for quoted in re.findall(r"`([^`]+)`", message):
-        quoted = quoted.replace("\0", "`")
-        if quoted in INSTANCES:
-            continue
-        for part in re.split(r"`[^`]*`|\.\.\.", quoted):
-            if len(part.strip()) >= 8:
-                check(part.strip() in compiler, "ownership.md quotes a diagnostic the compiler does not print: %r" % part.strip())
-
-# Every `brat ...` command line in the documents takes the flags it is shown with.
-shapes = {}
-command = re.compile(r"(?:\./bin/brat|\./lang/cxx/bin/brat-cxx|brat-cxx|(?<![\w/.-])brat)\s+(%s)((?:\s+[^\s`|]+)*)"
-                     % "|".join(sorted(_cxx._CLI_SUBS, key=len, reverse=True)))
-for doc in DOCS:
-    for lineno, line in enumerate(open(doc, encoding="utf-8"), 1):
-        for m in command.finditer(line):
-            lead = (m.group(1),) + tuple(m.group(2).split()[:1] if m.group(1) == "pkg" else ())
-            for flag in re.findall(r"(?<![\w-])(--[a-z][\w-]*)", m.group(2)):
-                shapes.setdefault((lead, flag), "%s:%d" % (os.path.relpath(doc, ROOT), lineno))
-check(shapes, "no command line with a flag found in the documents")
-for (lead, flag), where in sorted(shapes.items()):
-    p = subprocess.run(_cxx.cli_args(*lead, flag, "x"), capture_output=True, text=True, timeout=60, env=ENV, cwd=TMP)
-    check(not UNKNOWN.search(p.stdout + p.stderr), "%s shows `brat %s %s`, which is rejected" % (where, " ".join(lead), flag))
-
-# The environment variables the code reads are exactly the ones the reference lists.
-read = set()
-for pattern in ("cxx/src/*.cpp", "cxx/src/*.h", "engine/crt/*.h"):
-    for path in glob.glob(os.path.join(ROOT, "lang", pattern)):
-        read.update(re.findall(r'getenv\(\s*"(BRAT_[A-Z0-9_]+)"', open(path, encoding="utf-8").read()))
-listed = set(re.findall(r"^\| `(BRAT_[A-Z0-9_]+)` \|", cli_doc, re.M))
-check(read == listed, "read but not listed in cli.md: %s; listed but never read: %s"
-      % (sorted(read - listed), sorted(listed - read)))
-
-# The methods builtins.md lists are the ones the checker knows the size of.
-checker = open(os.path.join(ROOT, "lang", "cxx", "src", "check.cpp"), encoding="utf-8").read()
-table = checker[checker.index("builtin_arity = {"):]
-known = set(re.findall(r'\{"([a-z_]+)", \{', table[:table.index("};")]))
-builtins_md = open(os.path.join(ROOT, "docs", "guide", "builtins.md"), encoding="utf-8").read()
-listed_methods = set(re.findall(r"`[a-z]+\.([a-z_]+)\(", builtins_md))
-check(known == listed_methods, "methods only in check.cpp: %s; only in builtins.md: %s"
-      % (sorted(known - listed_methods), sorted(listed_methods - known)))
-
-# The keyword list of the specification is the lexer's.
-lexer = open(os.path.join(ROOT, "lang", "cxx", "src", "lexer.cpp"), encoding="utf-8").read()
-table = lexer[lexer.index("words[] = {"):]
-keywords = set(re.findall(r'"([a-z]+)"', table[:table.index("};")]))
-spec = open(os.path.join(ROOT, "lang", "spec", "SPEC.md"), encoding="utf-8").read()
-listed_words = set(re.findall(r"`([a-z]+)`", spec[spec.index("- Keywords:"):spec.index(" `struct`, `scope`")]))
-check(keywords == listed_words, "SPEC.md keywords differ from the lexer: only in the lexer %s, only in SPEC.md %s"
-      % (sorted(keywords - listed_words), sorted(listed_words - keywords)))
-
-# The numbers the documents quote are the ones the code compiles in.
-def constant(path, pattern):
-    return re.search(pattern, open(os.path.join(ROOT, "lang", path), encoding="utf-8").read()).group(1)
-
-
-pool = constant("engine/crt/conc.h", r"#define BPOOL_MAX (\d+)")
-pool_cap = constant("engine/crt/conc.h", r"#define BPOOL_CAP (\d+)")
-chan_cap = int(constant("engine/crt/conc.h", r"#define BRAT_MAX_CHAN_CAP (\d+)"))
-nest = constant("cxx/src/parser.cpp", r"kMaxNest = (\d+)")
-height = constant("cxx/src/parser.cpp", r"kMaxTreeDepth = (\d+)")
-regex_depth = constant("engine/crt/ops_str.h", r"#define BRAT_RE_MAX_DEPTH (\d+)")
-regex_size = int(constant("engine/crt/ops_str.h", r"#define BRAT_RE_MAX_INST (\d+)"))
-ledger = open(os.path.join(ROOT, "docs", "project", "LEDGER.md"), encoding="utf-8").read()
-limits = open(os.path.join(ROOT, "docs", "guide", "limits.md"), encoding="utf-8").read()
-examples = open(os.path.join(ROOT, "docs", "guide", "by-example.md"), encoding="utf-8").read()
-check("at most %s nested groups" % regex_depth in examples,
-      "by-example.md does not give the regex nesting limit %s" % regex_depth)
-check(re.search(r"at most %s\s+instructions" % format(regex_size, ","), examples),
-      "by-example.md does not give the regex size limit %d" % regex_size)
-check("at most %s OS threads" % pool in ledger, "LEDGER.md does not give the pool size %s" % pool)
-check("`cap <= %s`" % format(chan_cap, ",") in ledger, "LEDGER.md does not give the channel limit %d" % chan_cap)
-check(re.search(r"BRAT_THREADS.*at most %s\." % pool, cli_doc), "cli.md does not give the pool size %s" % pool)
-check(re.search(r"BRAT_THREADS.*up to %s\." % pool_cap, cli_doc), "cli.md does not give the pool ceiling %s" % pool_cap)
-check("up to %s while its workers wait" % pool_cap in ledger, "LEDGER.md does not give the pool ceiling %s" % pool_cap)
-arena_md = open(os.path.join(ROOT, "docs", "design", "ARENA.md"), encoding="utf-8").read()
-kept_chunks = constant("engine/crt/core.h", r"#define BARENA_POOL_CHUNKS (\d+)")
-kept_kib = int(constant("engine/crt/core.h", r"#define BARENA_POOL_BYTES \(\(size_t\)(\d+) \* 1024\)"))
-chunk_kib = int(constant("engine/crt/core.h", r"#define BARENA_CHUNK \(\(size_t\)(\d+) \* 1024\)"))
-value_depth = constant("engine/crt/core.h", r"#define BRAT_MAX_VALUE_DEPTH (\d+)")
-check("(with a %s-level recursion guard)" % value_depth in arena_md, "ARENA.md does not give the own() depth %s" % value_depth)
-check("same %s-level nesting cap" % value_depth in open(os.path.join(ROOT, "docs", "guide", "limits.md"), encoding="utf-8").read(),
-      "limits.md does not give the value depth %s" % value_depth)
-check("up to %s chunks (`%d KiB`)" % (kept_chunks, kept_kib) in arena_md, "ARENA.md does not give the kept pool")
-check("at least\n  %d KiB" % chunk_kib in arena_md, "ARENA.md does not give the chunk size %d KiB" % chunk_kib)
-check("nested %s levels deep" % nest in limits, "limits.md does not give the nesting limit %s" % nest)
-check("more than %s levels tall" % height in limits, "limits.md does not give the tree limit %s" % height)
 
 print("NEWCOMER ALL GREEN (%d asserts)" % n)

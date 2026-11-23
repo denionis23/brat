@@ -50,8 +50,7 @@
 #include "ffi_native.h"
 #include "ir.h"
 #include "lexer.h"
-#include "lsp.h"
-#include "lsp_wire.h"
+#include "json_wire.h"
 #include "module.h"
 #include "parser.h"
 #include "pkg_archive.h"
@@ -292,7 +291,7 @@ static bool native_safe_url(std::string_view url) {
     return false;
 }
 
-static bool native_validate_lock(const lsp_wire::LspJsonTape &tape, std::string &error) {
+static bool native_validate_lock(const json_wire::JsonTape &tape, std::string &error) {
     if (!tape.is_array(tape.root())) {
         error = "lockfile wants a JSON list";
         return false;
@@ -449,7 +448,7 @@ static bool native_validate_lock(const lsp_wire::LspJsonTape &tape, std::string 
     return true;
 }
 
-static bool native_read_lock(std::string &raw, lsp_wire::LspJsonTape &tape,
+static bool native_read_lock(std::string &raw, json_wire::JsonTape &tape,
                              bool &exists, std::string &error) {
     const std::filesystem::path path = std::filesystem::current_path() / "brat.lock";
     std::error_code ec;
@@ -587,7 +586,7 @@ static bool verify_archive_c_sources(const std::string &archive,
     }
     for (const auto &[rel, bytes] : archive_data) {
         if (rel.size() < 9 || rel.substr(rel.size() - 9) != ".bratbind") continue;
-        lsp_wire::LspJsonTape bind;
+        json_wire::JsonTape bind;
         if (!bind.parse(bytes) || !bind.is_object(bind.root())) {
             error = "invalid JSON in " + rel;
             return false;
@@ -729,7 +728,7 @@ static int native_pkg_verify(const std::string &target) {
         std::fprintf(stderr, "brat pkg: cannot read %s\n", lock_path.string().c_str());
         return 1;
     }
-    lsp_wire::LspJsonTape tape;
+    json_wire::JsonTape tape;
     if (!tape.parse(lock_raw)) {
         std::fprintf(stderr, "brat pkg: %s is not valid JSON: %.*s\n",
                      lock_path.string().c_str(), static_cast<int>(tape.error().size()), tape.error().data());
@@ -855,7 +854,7 @@ static int native_pkg_verify(const std::string &target) {
             const std::string manifest_path = archive + "/brat.pkg.json";
             const auto manifest_it = archive_data.find(manifest_path);
             if (!archive_c_sources.empty() || manifest_it != archive_data.end()) {
-                lsp_wire::LspJsonTape manifest_tape;
+                json_wire::JsonTape manifest_tape;
                 if (manifest_it != archive_data.end() &&
                     (!manifest_tape.parse(manifest_it->second) || !manifest_tape.is_object(manifest_tape.root()))) {
                     std::fprintf(stderr, "brat pkg: verify %s: invalid brat.pkg.json\n", archive.c_str());
@@ -1219,10 +1218,10 @@ static bool native_read_limited(const std::filesystem::path &path, size_t limit,
     return true;
 }
 
-static bool native_write_lock_items(const lsp_wire::LspJsonTape &tape,
+static bool native_write_lock_items(const json_wire::JsonTape &tape,
                                     const std::vector<uint32_t> &items,
                                     std::string &error) {
-    lsp_wire::JsonWriter writer;
+    json_wire::JsonWriter writer;
     writer.begin_arr();
     for (uint32_t item : items) writer.raw_value(tape.raw_json_slice(item));
     writer.end_arr();
@@ -1235,30 +1234,30 @@ static void native_json_indent(std::string &out, size_t depth) {
     out.append(depth * 2, ' ');
 }
 
-static bool native_json_pretty(const lsp_wire::LspJsonTape &tape, uint32_t node,
+static bool native_json_pretty(const json_wire::JsonTape &tape, uint32_t node,
                                std::string &out, size_t depth, std::string &error) {
     if (node == 0 || depth > 128) {
         error = "index JSON is too deeply nested";
         return false;
     }
     const auto kind = tape.at(node).kind;
-    if (kind == lsp_wire::JKind::Null) { out += "null"; return true; }
-    if (kind == lsp_wire::JKind::Bool) {
+    if (kind == json_wire::JKind::Null) { out += "null"; return true; }
+    if (kind == json_wire::JKind::Bool) {
         out += tape.bool_val(node) ? "true" : "false";
         return true;
     }
-    if (kind == lsp_wire::JKind::Int) {
+    if (kind == json_wire::JKind::Int) {
         out += std::to_string(tape.at(node).num.i64);
         return true;
     }
-    if (kind == lsp_wire::JKind::Float) {
+    if (kind == json_wire::JKind::Float) {
         const std::string_view raw = tape.raw_json_slice(node);
         if (raw.empty()) { error = "index JSON has an invalid number"; return false; }
         out.append(raw.data(), raw.size());
         return true;
     }
     if (tape.is_string(node)) {
-        lsp_wire::JsonWriter::write_escaped_string(out, tape.str_view(node));
+        json_wire::JsonWriter::write_escaped_string(out, tape.str_view(node));
         return true;
     }
     if (tape.is_array(node)) {
@@ -1290,7 +1289,7 @@ static bool native_json_pretty(const lsp_wire::LspJsonTape &tape, uint32_t node,
             const uint32_t value = tape.at(key).next_sibling;
             if (value == 0) { error = "index JSON has a malformed object"; return false; }
             native_json_indent(out, depth + 1);
-            lsp_wire::JsonWriter::write_escaped_string(out, tape.str_view(key));
+            json_wire::JsonWriter::write_escaped_string(out, tape.str_view(key));
             out += ": ";
             if (!native_json_pretty(tape, value, out, depth + 1, error)) return false;
             key = tape.at(value).next_sibling;
@@ -1310,17 +1309,17 @@ static void native_json_new_version(std::string &out, std::string_view url,
                                     size_t depth) {
     out += "{\n";
     native_json_indent(out, depth + 1);
-    lsp_wire::JsonWriter::write_escaped_string(out, "url");
+    json_wire::JsonWriter::write_escaped_string(out, "url");
     out += ": ";
-    lsp_wire::JsonWriter::write_escaped_string(out, url);
+    json_wire::JsonWriter::write_escaped_string(out, url);
     out += ",\n";
     native_json_indent(out, depth + 1);
-    lsp_wire::JsonWriter::write_escaped_string(out, "sha256");
+    json_wire::JsonWriter::write_escaped_string(out, "sha256");
     out += ": ";
-    lsp_wire::JsonWriter::write_escaped_string(out, digest);
+    json_wire::JsonWriter::write_escaped_string(out, digest);
     out += ",\n";
     native_json_indent(out, depth + 1);
-    lsp_wire::JsonWriter::write_escaped_string(out, "dependencies");
+    json_wire::JsonWriter::write_escaped_string(out, "dependencies");
     out += ": ";
     if (deps.empty()) {
         out += "{}\n";
@@ -1328,9 +1327,9 @@ static void native_json_new_version(std::string &out, std::string_view url,
         out += "{\n";
         for (size_t i = 0; i < deps.size(); ++i) {
             native_json_indent(out, depth + 2);
-            lsp_wire::JsonWriter::write_escaped_string(out, deps[i].first);
+            json_wire::JsonWriter::write_escaped_string(out, deps[i].first);
             out += ": ";
-            lsp_wire::JsonWriter::write_escaped_string(out, deps[i].second);
+            json_wire::JsonWriter::write_escaped_string(out, deps[i].second);
             out += i + 1 == deps.size() ? "\n" : ",\n";
         }
         native_json_indent(out, depth + 1);
@@ -1341,7 +1340,7 @@ static void native_json_new_version(std::string &out, std::string_view url,
 }
 
 static bool native_json_write_versions(
-        const lsp_wire::LspJsonTape &tape, uint32_t versions,
+        const json_wire::JsonTape &tape, uint32_t versions,
         std::string_view new_version, std::string_view url, std::string_view digest,
         const std::vector<std::pair<std::string, std::string>> &deps,
         std::string &out, size_t depth, std::string &error) {
@@ -1365,7 +1364,7 @@ static bool native_json_write_versions(
             const uint32_t next = tape.at(value).next_sibling;
             if (emitted++) out += ",\n";
             native_json_indent(out, depth + 1);
-            lsp_wire::JsonWriter::write_escaped_string(out, name);
+            json_wire::JsonWriter::write_escaped_string(out, name);
             out += ": ";
             if (name == new_version) {
                 native_json_new_version(out, url, digest, deps, depth + 1);
@@ -1379,7 +1378,7 @@ static bool native_json_write_versions(
     if (!wrote_new_version) {
         if (emitted++) out += ",\n";
         native_json_indent(out, depth + 1);
-        lsp_wire::JsonWriter::write_escaped_string(out, new_version);
+        json_wire::JsonWriter::write_escaped_string(out, new_version);
         out += ": ";
         native_json_new_version(out, url, digest, deps, depth + 1);
     }
@@ -1402,7 +1401,7 @@ static bool native_index_path(std::filesystem::path &path, std::string &error) {
     return true;
 }
 
-static bool native_object_member(const lsp_wire::LspJsonTape &tape, uint32_t object,
+static bool native_object_member(const json_wire::JsonTape &tape, uint32_t object,
                                  std::string_view wanted, uint32_t &value,
                                  std::string &error) {
     value = 0;
@@ -1426,7 +1425,7 @@ static bool native_object_member(const lsp_wire::LspJsonTape &tape, uint32_t obj
     return true;
 }
 
-static bool native_json_unique_keys(const lsp_wire::LspJsonTape &tape, uint32_t node,
+static bool native_json_unique_keys(const json_wire::JsonTape &tape, uint32_t node,
                                     size_t depth, std::string &error) {
     if (depth > 128) { error = "index JSON is too deeply nested"; return false; }
     if (tape.is_array(node)) {
@@ -1458,7 +1457,7 @@ static bool native_json_unique_keys(const lsp_wire::LspJsonTape &tape, uint32_t 
 }
 
 static bool native_read_pkg_index(const std::filesystem::path &path, std::string &raw,
-                                  lsp_wire::LspJsonTape &tape, bool &exists,
+                                  json_wire::JsonTape &tape, bool &exists,
                                   std::string &error) {
     std::error_code ec;
     const auto status = std::filesystem::symlink_status(path, ec);
@@ -1546,7 +1545,7 @@ static bool native_fetch_package_url(std::string_view url, std::string &body,
 }
 
 static bool native_read_pkg_index_any(std::string &raw,
-                                      lsp_wire::LspJsonTape &tape,
+                                      json_wire::JsonTape &tape,
                                       bool &exists,
                                       bool &is_remote,
                                       std::string &index_label,
@@ -1599,7 +1598,7 @@ static bool native_read_pkg_index_any(std::string &raw,
 static int native_pkg_list() {
     std::string raw, error;
     bool exists = false;
-    lsp_wire::LspJsonTape tape;
+    json_wire::JsonTape tape;
     if (!native_read_lock(raw, tape, exists, error)) {
         std::fprintf(stderr, "brat pkg: %s\n", error.c_str());
         return 1;
@@ -1683,7 +1682,7 @@ struct NativePkgPlanItem {
 };
 
 static bool native_pkg_search(
-        const lsp_wire::LspJsonTape &tape, uint32_t packages,
+        const json_wire::JsonTape &tape, uint32_t packages,
         const std::vector<NativePkgRequirement> &pending,
         const std::map<std::string, NativePkgSelection> &chosen,
         const std::map<std::string, std::vector<std::string>> &constraints,
@@ -1858,7 +1857,7 @@ static bool native_pkg_search(
 }
 
 static bool native_pkg_collect_plan(
-        const lsp_wire::LspJsonTape &tape,
+        const json_wire::JsonTape &tape,
         const std::map<std::string, NativePkgSelection> &selected,
         const std::string &name, std::set<std::string> &completed,
         std::set<std::string> &active, std::map<std::string, std::string> &filenames,
@@ -1958,7 +1957,7 @@ static bool native_ensure_directory(const std::filesystem::path &path,
     return true;
 }
 
-static bool native_pkg_lock_data(const lsp_wire::LspJsonTape &old_tape,
+static bool native_pkg_lock_data(const json_wire::JsonTape &old_tape,
                                  bool old_exists,
                                  const std::vector<NativePkgPlanItem> &plan,
                                  std::string &data, std::string &error) {
@@ -1980,7 +1979,7 @@ static bool native_pkg_lock_data(const lsp_wire::LspJsonTape &old_tape,
             if (!replace_name && !replace_file) kept.push_back(item);
         }
     }
-    lsp_wire::JsonWriter writer;
+    json_wire::JsonWriter writer;
     writer.begin_arr();
     for (uint32_t item : kept) writer.raw_value(old_tape.raw_json_slice(item));
     for (const auto &item : plan) {
@@ -2003,7 +2002,7 @@ static bool native_pkg_lock_data(const lsp_wire::LspJsonTape &old_tape,
         error = "lockfile exceeds 16 MiB";
         return false;
     }
-    lsp_wire::LspJsonTape check;
+    json_wire::JsonTape check;
     if (!check.parse(data) || !native_validate_lock(check, error)) {
         if (error.empty()) error = "cannot validate new lockfile";
         return false;
@@ -2011,7 +2010,7 @@ static bool native_pkg_lock_data(const lsp_wire::LspJsonTape &old_tape,
     return true;
 }
 
-static bool native_archive_lock_data(const lsp_wire::LspJsonTape &old_tape,
+static bool native_archive_lock_data(const json_wire::JsonTape &old_tape,
                                      bool old_exists,
                                      const std::vector<pkg_archive::ArchivePlanItem> &plan,
                                      std::string &data, std::string &error) {
@@ -2036,7 +2035,7 @@ static bool native_archive_lock_data(const lsp_wire::LspJsonTape &old_tape,
             kept.push_back(item);
         }
     }
-    lsp_wire::JsonWriter writer;
+    json_wire::JsonWriter writer;
     writer.begin_arr();
     for (uint32_t item : kept) writer.raw_value(old_tape.raw_json_slice(item));
     for (const auto &it : plan) {
@@ -2076,7 +2075,7 @@ static bool native_archive_lock_data(const lsp_wire::LspJsonTape &old_tape,
         error = "lockfile exceeds 16 MiB";
         return false;
     }
-    lsp_wire::LspJsonTape check;
+    json_wire::JsonTape check;
     if (!check.parse(data) || !native_validate_lock(check, error)) {
         if (error.empty()) error = "cannot validate new lockfile";
         return false;
@@ -2226,7 +2225,7 @@ static bool native_stage_pkg_files(const std::vector<NativePkgPlanItem> &plan,
 static int native_pkg_remove(const std::string &name) {
     std::string raw, error;
     bool exists = false;
-    lsp_wire::LspJsonTape tape;
+    json_wire::JsonTape tape;
     if (!native_read_lock(raw, tape, exists, error)) {
         std::fprintf(stderr, "brat pkg: %s\n", error.c_str());
         return 1;
@@ -2333,7 +2332,7 @@ static int native_pkg_add_archive(const std::string &spec, bool allow_file_root,
                                   const std::string &target) {
     std::string lock_raw, new_lock, error;
     bool lock_exists = false;
-    lsp_wire::LspJsonTape lock_tape;
+    json_wire::JsonTape lock_tape;
     if (!native_read_lock(lock_raw, lock_tape, lock_exists, error)) {
         std::fprintf(stderr, "brat pkg: %s\n", error.c_str());
         return 1;
@@ -2385,7 +2384,7 @@ static int native_pkg_add_url(const std::string &url, const std::string &target)
     std::vector<NativePkgPlanItem> plan{std::move(item)};
     std::string lock_raw, new_lock;
     bool lock_exists = false;
-    lsp_wire::LspJsonTape lock_tape;
+    json_wire::JsonTape lock_tape;
     if (!native_read_lock(lock_raw, lock_tape, lock_exists, error)) {
         std::fprintf(stderr, "brat pkg: %s\n", error.c_str());
         return 1;
@@ -2425,7 +2424,7 @@ static int native_pkg_add(const std::string &spec, const std::string &target) {
     }
     std::string error, index_raw, index_label;
     bool index_exists = false, index_remote = false, index_block_internal = false;
-    lsp_wire::LspJsonTape index_tape;
+    json_wire::JsonTape index_tape;
     if (!native_read_pkg_index_any(index_raw, index_tape, index_exists, index_remote,
                                    index_label, error, &index_block_internal)) {
         std::fprintf(stderr, "brat pkg: %s\n", error.c_str());
@@ -2438,7 +2437,7 @@ static int native_pkg_add(const std::string &spec, const std::string &target) {
     }
     std::string lock_raw;
     bool lock_exists = false;
-    lsp_wire::LspJsonTape lock_tape;
+    json_wire::JsonTape lock_tape;
     if (!native_read_lock(lock_raw, lock_tape, lock_exists, error)) {
         std::fprintf(stderr, "brat pkg: %s\n", error.c_str());
         return 1;
@@ -2498,7 +2497,7 @@ static int native_pkg_add(const std::string &spec, const std::string &target) {
 static int native_pkg_install(const std::string &target) {
     std::string raw, error;
     bool exists = false;
-    lsp_wire::LspJsonTape tape;
+    json_wire::JsonTape tape;
     if (!native_read_lock(raw, tape, exists, error)) {
         std::fprintf(stderr, "brat pkg: %s\n", error.c_str());
         return 1;
@@ -2616,7 +2615,7 @@ static int native_pkg_update(int argc, char **argv) {
     }
     std::string lock_raw, error;
     bool lock_exists = false;
-    lsp_wire::LspJsonTape lock_tape;
+    json_wire::JsonTape lock_tape;
     if (!native_read_lock(lock_raw, lock_tape, lock_exists, error)) {
         std::fprintf(stderr, "brat pkg: %s\n", error.c_str());
         return 1;
@@ -2648,7 +2647,7 @@ static int native_pkg_update(int argc, char **argv) {
 
     std::string index_raw, index_label;
     bool index_exists = false, index_remote = false, index_block_internal = false;
-    lsp_wire::LspJsonTape index_tape;
+    json_wire::JsonTape index_tape;
     if (!native_read_pkg_index_any(index_raw, index_tape, index_exists, index_remote,
                                    index_label, error, &index_block_internal)) {
         std::fprintf(stderr, "brat pkg: %s\n", error.c_str());
@@ -2823,7 +2822,7 @@ static int native_pkg_publish(int argc, char **argv) {
     }
     std::string raw;
     bool index_exists = false;
-    lsp_wire::LspJsonTape tape;
+    json_wire::JsonTape tape;
     if (!native_read_pkg_index(index_path, raw, tape, index_exists, error)) {
         std::fprintf(stderr, "brat pkg: publish failed: brat pkg: %s\n", error.c_str());
         return 1;
@@ -2878,7 +2877,7 @@ static int native_pkg_publish(int argc, char **argv) {
             if (!first_package) index_data += ",\n";
             first_package = false;
             native_json_indent(index_data, 2);
-            lsp_wire::JsonWriter::write_escaped_string(index_data, package_key);
+            json_wire::JsonWriter::write_escaped_string(index_data, package_key);
             index_data += ": ";
             if (package_key == package) {
                 package_found = true;
@@ -2897,7 +2896,7 @@ static int native_pkg_publish(int argc, char **argv) {
     if (!package_found) {
         if (!first_package) index_data += ",\n";
         native_json_indent(index_data, 2);
-        lsp_wire::JsonWriter::write_escaped_string(index_data, package);
+        json_wire::JsonWriter::write_escaped_string(index_data, package);
         index_data += ": ";
         if (!native_json_write_versions(tape, 0, version, url, digest,
                                         dependencies, index_data, 2, error)) {

@@ -149,9 +149,8 @@ def test_http_server_and_vscode(cxx):
     pkg_p = os.path.join(vs_dir, "package.json")
     cfg_p = os.path.join(vs_dir, "language-configuration.json")
     tm_p = os.path.join(vs_dir, "syntaxes", "brat.tmLanguage.json")
-    ext_p = os.path.join(vs_dir, "extension.js")
     rd_p = os.path.join(vs_dir, "README.md")
-    for p in (pkg_p, cfg_p, tm_p, ext_p, rd_p):
+    for p in (pkg_p, cfg_p, tm_p, rd_p):
         assert os.path.isfile(p), f"missing VS Code extension file: {p}"
     with open(pkg_p, encoding="utf-8") as f:
         pkg = json.load(f)
@@ -164,13 +163,6 @@ def test_http_server_and_vscode(cxx):
     with open(tm_p, encoding="utf-8") as f:
         tm = json.load(f)
     assert tm["scopeName"] == "source.brat"
-    with open(ext_p, encoding="utf-8") as f:
-        ext_js = f.read()
-    assert '"lsp"' in ext_js and "brat-cxx" in ext_js
-    node = shutil.which("node")
-    if node:
-        rn = _run([node, "--check", ext_p])
-        assert rn.returncode == 0, rn.stderr
 
     # 2. Verify `std.http` server-side HTTP/1.1 parser, security guards & live TCP loopback.
     with tempfile.TemporaryDirectory(prefix="brat_http_") as td:

@@ -1,6 +1,6 @@
 #include "cli_tools.h"
 #include "ffi_native.h"
-#include "lsp_wire.h"
+#include "json_wire.h"
 #include "pkg_io.h"
 
 #include <algorithm>
@@ -176,7 +176,7 @@ static bool json_complexity_ok(std::string_view input) {
 }
 
 static std::string json_text_result(std::string_view text, bool is_error) {
-    lsp_wire::JsonWriter writer;
+    json_wire::JsonWriter writer;
     writer.begin_obj();
     writer.key_lit("content");
     writer.begin_arr();
@@ -192,7 +192,7 @@ static std::string json_text_result(std::string_view text, bool is_error) {
 
 static std::string json_cli_result(int rc, std::string_view out, std::string_view err,
                                    std::string_view binary = {}, bool include_binary = false) {
-    lsp_wire::JsonWriter writer;
+    json_wire::JsonWriter writer;
     writer.begin_obj();
     writer.key_lit("exit"); writer.int64(rc);
     writer.key_lit("stdout"); writer.str(out);
@@ -207,7 +207,7 @@ static std::string json_cli_result(int rc, std::string_view out, std::string_vie
 }
 
 static std::string make_reply(std::string_view raw_id, std::string_view result) {
-    lsp_wire::JsonWriter writer;
+    json_wire::JsonWriter writer;
     writer.begin_obj();
     writer.key_lit("jsonrpc"); writer.str("2.0");
     writer.key_lit("id"); writer.raw_value(raw_id);
@@ -217,7 +217,7 @@ static std::string make_reply(std::string_view raw_id, std::string_view result) 
 }
 
 static std::string make_error(std::string_view raw_id, int code, std::string_view message) {
-    lsp_wire::JsonWriter writer;
+    json_wire::JsonWriter writer;
     writer.begin_obj();
     writer.key_lit("jsonrpc"); writer.str("2.0");
     writer.key_lit("id"); writer.raw_value(raw_id);
@@ -230,7 +230,7 @@ static std::string make_error(std::string_view raw_id, int code, std::string_vie
     return std::string(writer.view());
 }
 
-static bool get_string(const lsp_wire::LspJsonTape &tape, uint32_t object,
+static bool get_string(const json_wire::JsonTape &tape, uint32_t object,
                        std::string_view key, std::string &out) {
     const uint32_t node = tape.get(object, key);
     if (!tape.is_string(node)) return false;
@@ -314,7 +314,7 @@ static bool is_protected_source_ext(std::string ext) {
     return false;
 }
 
-static bool require_path(const lsp_wire::LspJsonTape &tape, uint32_t args,
+static bool require_path(const json_wire::JsonTape &tape, uint32_t args,
                          std::string &path, std::string &error) {
     std::string raw;
     if (!get_string(tape, args, "path", raw) || raw.empty()) {
@@ -343,7 +343,7 @@ struct ToolResult {
     bool failed = false;
 };
 
-static ToolResult invoke_tool(std::string_view name, const lsp_wire::LspJsonTape &tape,
+static ToolResult invoke_tool(std::string_view name, const json_wire::JsonTape &tape,
                               uint32_t args, const std::string &exe) {
     ToolResult result;
     std::string path;
@@ -487,7 +487,7 @@ static ToolResult invoke_tool(std::string_view name, const lsp_wire::LspJsonTape
             }
         }
         if (!current.empty()) groups.push_back(std::move(current));
-        lsp_wire::JsonWriter writer;
+        json_wire::JsonWriter writer;
         writer.begin_obj();
         writer.key_lit("exit"); writer.int64(r.code);
         writer.key_lit("level"); writer.str(flag);
@@ -587,7 +587,7 @@ int cmd_mcp(int argc, char **argv) {
             if (!send_body(make_error("null", -32700, "parse error"), jsonl_mode)) return 1;
             continue;
         }
-        lsp_wire::LspJsonTape tape;
+        json_wire::JsonTape tape;
         if (!json_complexity_ok(input.body) || !tape.parse(input.body)) {
             if (!send_body(make_error("null", -32700, "parse error"), jsonl_mode)) return 1;
             continue;
@@ -600,8 +600,8 @@ int cmd_mcp(int argc, char **argv) {
         const uint32_t id_node = tape.get(root, "id");
         if (id_node != 0) {
             const auto ik = tape.at(id_node).kind;
-            if (ik != lsp_wire::JKind::Null && ik != lsp_wire::JKind::Int &&
-                ik != lsp_wire::JKind::Float && !tape.is_string(id_node)) {
+            if (ik != json_wire::JKind::Null && ik != json_wire::JKind::Int &&
+                ik != json_wire::JKind::Float && !tape.is_string(id_node)) {
                 if (!send_body(make_error("null", -32600, "invalid request"), jsonl_mode)) return 1;
                 continue;
             }
@@ -623,7 +623,7 @@ int cmd_mcp(int argc, char **argv) {
         }
         if (method == "initialize") {
             initialized = true;
-            lsp_wire::JsonWriter result;
+            json_wire::JsonWriter result;
             result.begin_obj();
             result.key_lit("protocolVersion"); result.str("2025-06-18");
             result.key_lit("capabilities"); result.begin_obj();

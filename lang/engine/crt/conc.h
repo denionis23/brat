@@ -967,6 +967,7 @@ BFN_HOT void vfieldset_ic(Val s, const char *k, Val v, BFieldIC *ic);
 BFN_HOT void vstruct_slot_set(Val s, const BShape *shp, bint slot, const char *k, Val v) {
     if (BRAT_LIKELY(s.tag == V_STRUCT && s.as.map->shape == shp)) {
         Map *m = s.as.map;
+        v = barena_out(v, m);
         BRAT_CTR_LOCK_OBJ(m);
         Val old = m->vals[slot];
         m->vals[slot] = v;
@@ -979,6 +980,7 @@ BFN_HOT void vstruct_slot_set(Val s, const BShape *shp, bint slot, const char *k
 BFN_HOT void vfieldset_ic(Val s, const char *k, Val v, BFieldIC *ic) {
     if (s.tag != V_STRUCT) { vrelease1(v); vraise("bad field set"); return; }
     Map *m = s.as.map;
+    v = barena_out(v, m);
     size_t kl = 0;
     int have_kl = 0;
     BRAT_CTR_LOCK_OBJ(m);
@@ -1381,9 +1383,9 @@ static void _vch_put(VChan *c) {
 }
 
 BFN Val vchan_new(Val cap) {
-    if (cap.tag != V_INT) return _verr_c("chan: capacity must be an integer");
+    if (cap.tag != V_INT) { vraise("chan: capacity must be an integer"); return vunwind; }
     bint n = cap.as.ival;
-    if (n < 1) return _verr_c("chan: capacity must be at least 1");
+    if (n < 1) { vraise("chan: capacity must be at least 1"); return vunwind; }
     if (n > BRAT_MAX_CHAN_CAP) return _verr_c("chan: capacity too large");
     _vch_tab_lock();
     if (n > BRAT_MAX_TOTAL_CHAN_SLOTS - _vch_total_slots) {

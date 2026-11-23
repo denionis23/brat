@@ -342,7 +342,7 @@ bool parse_archive_manifest(std::string_view raw_bytes,
         error = pkg_name + "/brat.pkg.json is invalid JSON: invalid UTF-8";
         return false;
     }
-    lsp_wire::LspJsonTape tape;
+    json_wire::JsonTape tape;
     if (!tape.parse(raw_bytes)) {
         error = pkg_name + "/brat.pkg.json is invalid JSON: " + std::string(tape.error());
         return false;
@@ -579,7 +579,7 @@ bool verify_extracted_bratbinds(const std::map<std::string, std::string> &extrac
             std::error_code ec;
             std::filesystem::create_directories(pkg_td, ec);
             for (const auto &[brel, bbytes] : binds) {
-                lsp_wire::LspJsonTape bt;
+                json_wire::JsonTape bt;
                 if (!bt.parse(bbytes) || !bt.is_object(bt.root())) {
                     error = "invalid JSON in " + brel;
                     return false;
@@ -930,7 +930,7 @@ bool extract_tar_package(std::string_view raw_bytes,
 bool resolve_archive_graph(std::string_view root_spec,
                            bool allow_file_root,
                            const std::string &target,
-                           const lsp_wire::LspJsonTape &lock_tape,
+                           const json_wire::JsonTape &lock_tape,
                            bool lock_exists,
                            std::vector<ArchivePlanItem> &out_plan,
                            std::string &error) {

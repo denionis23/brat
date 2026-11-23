@@ -2,7 +2,7 @@
 
 #include "ffi_cdecl.h"
 #include "ffi_object.h"
-#include "lsp_wire.h"
+#include "json_wire.h"
 #include "module.h"
 #include "parser.h"
 #include "pkg_io.h"
@@ -1617,7 +1617,7 @@ static FfiContract build_contract(const BratFfiSurface &surf,
     return c;
 }
 
-static void write_contract_json(lsp_wire::JsonWriter &w, const FfiContract &c) {
+static void write_contract_json(json_wire::JsonWriter &w, const FfiContract &c) {
     w.begin_obj();
     w.key_lit("version"); w.int64(c.version);
     w.key_lit("target");
@@ -1687,7 +1687,7 @@ static void write_contract_json(lsp_wire::JsonWriter &w, const FfiContract &c) {
     w.end_obj();
 }
 
-static bool parse_contract_from_tape(const lsp_wire::LspJsonTape &tape, uint32_t obj, FfiContract &out) {
+static bool parse_contract_from_tape(const json_wire::JsonTape &tape, uint32_t obj, FfiContract &out) {
     if (!tape.is_object(obj)) return false;
     out = FfiContract{};
     out.version = tape.int_or(tape.get(obj, "version"), 1);
@@ -1781,7 +1781,7 @@ static bool extract_binary_contract_json(const std::string &bin_path, std::strin
         size_t jend = bytes.find(kContractEnd, jstart);
         if (jend != std::string::npos && jend - jstart <= 4 * 1024 * 1024) {
             std::string_view slice(bytes.data() + jstart, jend - jstart);
-            lsp_wire::LspJsonTape tape;
+            json_wire::JsonTape tape;
             if (tape.parse(slice) && parse_contract_from_tape(tape, tape.root(), ct_out)) {
                 raw_json_out = std::string(slice);
                 return true;
@@ -1953,7 +1953,7 @@ static bool make_bratbind_json(const std::string &brat_path,
                                  !oi.dwarf_fns.empty() || !oi.dwarf_structs.empty());
     }
 
-    lsp_wire::JsonWriter w;
+    json_wire::JsonWriter w;
     w.begin_obj();
     w.key_lit("format"); w.str("bratbind");
     w.key_lit("version"); w.int64(1);
@@ -2143,7 +2143,7 @@ AbiMatrixResult abi_matrix(const std::string &source_path,
         rows.push_back({std::move(tm), std::move(rep), cc_ok, std::move(b_lay), std::move(c_lay)});
     }
 
-    lsp_wire::JsonWriter w;
+    json_wire::JsonWriter w;
     auto write_layout_pair_json = [&](const std::string &sn,
                                       const std::map<std::string, RecordLayout> &b_lay,
                                       const std::map<std::string, RecordLayout> &c_lay) {
@@ -2250,7 +2250,7 @@ bool verify_bratbind_bytes(std::string_view brat_bytes,
                            const std::map<std::string, std::string> &object_files,
                            std::string_view label,
                            std::string &error) {
-    lsp_wire::LspJsonTape tape;
+    json_wire::JsonTape tape;
     if (!tape.parse(bind_bytes) || !tape.is_object(tape.root())) {
         error = std::string(label) + ": invalid JSON";
         return false;
@@ -2596,7 +2596,7 @@ int cmd_ffi(int argc, char **argv) {
             return 1;
         }
         if (json_mode) {
-            lsp_wire::JsonWriter w;
+            json_wire::JsonWriter w;
             w.begin_obj();
             w.key_lit("binary"); w.str(bin_path);
             w.key_lit("contract");
@@ -2781,7 +2781,7 @@ int cmd_ffi(int argc, char **argv) {
 
     int rc = (total_rep.errors == 0) ? 0 : 1;
     if (json_mode) {
-        lsp_wire::JsonWriter w;
+        json_wire::JsonWriter w;
         w.begin_obj();
         w.key_lit("file"); w.str(src_file);
         w.key_lit("header"); if (!header.empty()) w.str(header); else w.null_val();

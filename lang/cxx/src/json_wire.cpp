@@ -1,4 +1,4 @@
-#include "lsp_wire.h"
+#include "json_wire.h"
 
 #include <algorithm>
 #include <cctype>
@@ -17,34 +17,26 @@
 #include <cstring>
 #include <limits>
 
-#if defined(_WIN32)
-#include <fcntl.h>
-#include <io.h>
-#else
-#include <errno.h>
-#include <unistd.h>
-#endif
-
 #if defined(__AVX2__)
 #include <immintrin.h>
-#define BRAT_LSP_AVX2_COMPILED 1
+#define BRAT_JSON_AVX2_COMPILED 1
 #elif (defined(__x86_64__) || defined(_M_X64)) && (defined(__GNUC__) || defined(__clang__))
 #include <immintrin.h>
-#define BRAT_LSP_SSE2 1
-#define BRAT_LSP_RUNTIME_AVX2 1
+#define BRAT_JSON_SSE2 1
+#define BRAT_JSON_RUNTIME_AVX2 1
 #elif defined(__SSE2__) || defined(__x86_64__) || defined(_M_X64)
 #include <emmintrin.h>
-#define BRAT_LSP_SSE2 1
+#define BRAT_JSON_SSE2 1
 #elif defined(__aarch64__) || defined(_M_ARM64)
 #include <arm_neon.h>
-#define BRAT_LSP_NEON 1
+#define BRAT_JSON_NEON 1
 #endif
 
-namespace lsp_wire {
+namespace json_wire {
 
 namespace {
 
-#if defined(BRAT_LSP_RUNTIME_AVX2)
+#if defined(BRAT_JSON_RUNTIME_AVX2)
 inline bool cpu_has_avx2() {
     static const bool supported = __builtin_cpu_supports("avx2");
     return supported;
@@ -74,38 +66,6 @@ size_t avx2_scan_json_str_safe(const char *p, size_t n) {
     return n;
 }
 
-__attribute__((target("avx2")))
-size_t avx2_build_lines(const char *p, size_t n, std::vector<uint32_t> &starts,
-                        std::vector<uint8_t> &non_ascii, uint8_t &cur_hi) {
-    size_t i = 0;
-    const __m256i vnl = _mm256_set1_epi8('\n');
-    while (i + 32 <= n) {
-        const __m256i v = _mm256_loadu_si256(reinterpret_cast<const __m256i *>(p + i));
-        uint32_t nl_mask = static_cast<uint32_t>(_mm256_movemask_epi8(_mm256_cmpeq_epi8(v, vnl)));
-        const uint32_t hi_mask = static_cast<uint32_t>(_mm256_movemask_epi8(v));
-        if (nl_mask == 0) {
-            cur_hi |= static_cast<uint8_t>(hi_mask != 0);
-        } else {
-            uint32_t prev_bit = 0;
-            while (nl_mask != 0) {
-                const uint32_t bit = static_cast<uint32_t>(__builtin_ctz(nl_mask));
-                const uint32_t seg_mask = (bit == 0) ? 0u : (((1u << bit) - 1u) & ~((1u << prev_bit) - 1u));
-                if ((hi_mask & seg_mask) != 0) cur_hi = 1;
-                non_ascii.push_back(cur_hi);
-                cur_hi = 0;
-                starts.push_back(static_cast<uint32_t>(i + bit + 1));
-                prev_bit = bit + 1;
-                nl_mask &= (nl_mask - 1u);
-            }
-            if (prev_bit < 32u) {
-                const uint32_t tail_mask = ~((1u << prev_bit) - 1u);
-                if ((hi_mask & tail_mask) != 0) cur_hi = 1;
-            }
-        }
-        i += 32;
-    }
-    return i;
-}
 #endif
 
 inline uint32_t decode_utf8_cp(std::string_view s, size_t &i) {
@@ -132,11 +92,11 @@ inline uint32_t decode_utf8_cp(std::string_view s, size_t &i) {
 // Finds first index in `p[0..n)` where byte is `"`, `\`, or unsigned `< 0x20`.
 // Returns `n` if all bytes are safe unescaped JSON string characters (including valid UTF-8 >= 0x80).
 inline size_t simd_scan_json_str_safe(const char *p, size_t n) {
-#if defined(BRAT_LSP_RUNTIME_AVX2)
+#if defined(BRAT_JSON_RUNTIME_AVX2)
     if (n >= 32 && cpu_has_avx2()) return avx2_scan_json_str_safe(p, n);
 #endif
     size_t i = 0;
-#if defined(BRAT_LSP_AVX2_COMPILED)
+#if defined(BRAT_JSON_AVX2_COMPILED)
     const __m256i vquote = _mm256_set1_epi8('"');
     const __m256i vbslash = _mm256_set1_epi8('\\');
     const __m256i vctrl_max = _mm256_set1_epi8(0x1f);
@@ -150,7 +110,7 @@ inline size_t simd_scan_json_str_safe(const char *p, size_t n) {
         if (mask != 0) return i + static_cast<size_t>(__builtin_ctz(mask));
         i += 32;
     }
-#elif defined(BRAT_LSP_SSE2)
+#elif defined(BRAT_JSON_SSE2)
     const __m128i vquote = _mm_set1_epi8('"');
     const __m128i vbslash = _mm_set1_epi8('\\');
     const __m128i vctrl_max = _mm_set1_epi8(0x1f);
@@ -164,7 +124,7 @@ inline size_t simd_scan_json_str_safe(const char *p, size_t n) {
         if (mask != 0) return i + static_cast<size_t>(__builtin_ctz(mask));
         i += 16;
     }
-#elif defined(BRAT_LSP_NEON)
+#elif defined(BRAT_JSON_NEON)
     const uint8x16_t vquote = vdupq_n_u8('"');
     const uint8x16_t vbslash = vdupq_n_u8('\\');
     const uint8x16_t vctrl = vdupq_n_u8(0x20);
@@ -210,7 +170,7 @@ inline size_t simd_scan_json_str_safe(const char *p, size_t n) {
 }
 
 inline size_t simd_skip_ws(const char *p, size_t i, size_t n) {
-#if defined(BRAT_LSP_SSE2)
+#if defined(BRAT_JSON_SSE2)
     const __m128i vsp = _mm_set1_epi8(' ');
     const __m128i vnl = _mm_set1_epi8('\n');
     const __m128i vcr = _mm_set1_epi8('\r');
@@ -251,185 +211,6 @@ inline void append_utf8(std::string &out, uint32_t cp) {
 }
 
 }  // namespace
-
-// LineIndex implementation (SIMD newline + non-ASCII bitmask scan).
-void LineIndex::build(std::string_view text) {
-    starts.clear();
-    non_ascii.clear();
-    const size_t approx_lines = text.size() / 32 + 4;
-    if (starts.capacity() < approx_lines) {
-        starts.reserve(approx_lines);
-        non_ascii.reserve(approx_lines);
-    }
-    starts.push_back(0);
-    uint8_t cur_hi = 0;
-    const char *p = text.data();
-    const size_t n = text.size();
-    size_t i = 0;
-
-#if defined(BRAT_LSP_RUNTIME_AVX2)
-    if (n >= 32 && cpu_has_avx2()) {
-        i = avx2_build_lines(p, n, starts, non_ascii, cur_hi);
-    } else
-#endif
-    {
-#if defined(BRAT_LSP_AVX2_COMPILED)
-        const __m256i vnl = _mm256_set1_epi8('\n');
-        while (i + 32 <= n) {
-            const __m256i v = _mm256_loadu_si256(reinterpret_cast<const __m256i *>(p + i));
-            uint32_t nl_mask = static_cast<uint32_t>(_mm256_movemask_epi8(_mm256_cmpeq_epi8(v, vnl)));
-            const uint32_t hi_mask = static_cast<uint32_t>(_mm256_movemask_epi8(v));
-            if (nl_mask == 0) {
-                cur_hi |= static_cast<uint8_t>(hi_mask != 0);
-            } else {
-                uint32_t prev_bit = 0;
-                while (nl_mask != 0) {
-                    const uint32_t bit = static_cast<uint32_t>(__builtin_ctz(nl_mask));
-                    const uint32_t seg_mask = (bit == 0) ? 0u : (((1u << bit) - 1u) & ~((1u << prev_bit) - 1u));
-                    if ((hi_mask & seg_mask) != 0) cur_hi = 1;
-                    non_ascii.push_back(cur_hi);
-                    cur_hi = 0;
-                    starts.push_back(static_cast<uint32_t>(i + bit + 1));
-                    prev_bit = bit + 1;
-                    nl_mask &= (nl_mask - 1u);
-                }
-                if (prev_bit < 32u) {
-                    const uint32_t tail_mask = ~((1u << prev_bit) - 1u);
-                    if ((hi_mask & tail_mask) != 0) cur_hi = 1;
-                }
-            }
-            i += 32;
-        }
-#elif defined(BRAT_LSP_SSE2)
-        const __m128i vnl = _mm_set1_epi8('\n');
-        while (i + 16 <= n) {
-            const __m128i v = _mm_loadu_si128(reinterpret_cast<const __m128i *>(p + i));
-            uint32_t nl_mask = static_cast<uint32_t>(_mm_movemask_epi8(_mm_cmpeq_epi8(v, vnl)));
-            const uint32_t hi_mask = static_cast<uint32_t>(_mm_movemask_epi8(v));
-            if (nl_mask == 0) {
-                cur_hi |= static_cast<uint8_t>(hi_mask != 0);
-            } else {
-                uint32_t prev_bit = 0;
-                while (nl_mask != 0) {
-                    const uint32_t bit = static_cast<uint32_t>(__builtin_ctz(nl_mask));
-                    const uint32_t seg_mask = (bit == 0) ? 0u : (((1u << bit) - 1u) & ~((1u << prev_bit) - 1u));
-                    if ((hi_mask & seg_mask) != 0) cur_hi = 1;
-                    non_ascii.push_back(cur_hi);
-                    cur_hi = 0;
-                    starts.push_back(static_cast<uint32_t>(i + bit + 1));
-                    prev_bit = bit + 1;
-                    nl_mask &= (nl_mask - 1u);
-                }
-                if (prev_bit < 16u) {
-                    const uint32_t tail_mask = (0xffffu) & ~((1u << prev_bit) - 1u);
-                    if ((hi_mask & tail_mask) != 0) cur_hi = 1;
-                }
-            }
-            i += 16;
-        }
-#endif
-    }
-    while (i < n) {
-        const auto c = static_cast<unsigned char>(p[i]);
-        if (c == '\n') {
-            non_ascii.push_back(cur_hi);
-            cur_hi = 0;
-            starts.push_back(static_cast<uint32_t>(i + 1));
-        } else if (c >= 0x80u) {
-            cur_hi = 1;
-        }
-        ++i;
-    }
-    non_ascii.push_back(cur_hi);
-}
-
-size_t LineIndex::line_start_offset(std::string_view text, int line) const {
-    if (line <= 0 || starts.empty()) return 0;
-    if (static_cast<size_t>(line) >= starts.size()) return text.size();
-    return starts[static_cast<size_t>(line)];
-}
-
-std::string_view LineIndex::line_view(std::string_view text, int line) const {
-    if (line < 0 || static_cast<size_t>(line) >= starts.size()) return {};
-    const size_t s = starts[static_cast<size_t>(line)];
-    size_t e = (static_cast<size_t>(line + 1) < starts.size())
-                   ? (starts[static_cast<size_t>(line + 1)] - 1)
-                   : text.size();
-    if (e > s && text[e - 1] == '\r') --e;
-    return text.substr(s, e - s);
-}
-
-int LineIndex::line_of_offset(size_t byte_offset) const {
-    if (starts.empty()) return 0;
-    auto it = std::upper_bound(starts.begin(), starts.end(), static_cast<uint32_t>(byte_offset));
-    if (it == starts.begin()) return 0;
-    return static_cast<int>((it - starts.begin()) - 1);
-}
-
-int LineIndex::utf16_len(std::string_view s, bool known_ascii) {
-    if (known_ascii) return static_cast<int>(s.size());
-    int n = 0;
-    for (size_t i = 0; i < s.size();) n += decode_utf8_cp(s, i) > 0xffffu ? 2 : 1;
-    return n;
-}
-
-int LineIndex::line_utf16_len(std::string_view text, int line) const {
-    if (line < 0 || static_cast<size_t>(line) >= starts.size()) return 0;
-    const std::string_view sv = line_view(text, line);
-    if (non_ascii[static_cast<size_t>(line)] == 0) return static_cast<int>(sv.size());
-    return utf16_len(sv, false);
-}
-
-bool LineIndex::position_to_offset(std::string_view text, int line, int character,
-                                   size_t &out_offset) const {
-    if (line < 0 || character < 0 || static_cast<size_t>(line) >= starts.size()) return false;
-    const size_t start = starts[static_cast<size_t>(line)];
-    const std::string_view sv = line_view(text, line);
-    if (non_ascii[static_cast<size_t>(line)] == 0) {
-        if (static_cast<size_t>(character) > sv.size()) return false;
-        out_offset = start + static_cast<size_t>(character);
-        return true;
-    }
-    size_t at = 0;
-    int units = 0;
-    while (at < sv.size()) {
-        if (units == character) {
-            out_offset = start + at;
-            return true;
-        }
-        const size_t prev = at;
-        const int width = decode_utf8_cp(sv, at) > 0xffffu ? 2 : 1;
-        if (at > sv.size() || units + width > character || at <= prev) return false;
-        units += width;
-    }
-    if (units != character) return false;
-    out_offset = start + sv.size();
-    return true;
-}
-
-size_t LineIndex::clamp_col_in_line(std::string_view text, int line, int character) const {
-    if (line < 0 || static_cast<size_t>(line) >= starts.size() || character <= 0) return 0;
-    const std::string_view sv = line_view(text, line);
-    if (non_ascii[static_cast<size_t>(line)] == 0) {
-        return std::min<size_t>(sv.size(), static_cast<size_t>(character));
-    }
-    size_t i = 0;
-    int units = character;
-    while (i < sv.size() && units > 0) {
-        const size_t old = i;
-        units -= decode_utf8_cp(sv, i) > 0xffffu ? 2 : 1;
-        if (units < 0) return old;
-    }
-    return i;
-}
-
-int LineIndex::byte_to_utf16_col(std::string_view text, int line, size_t byte_in_line) const {
-    if (line < 0 || static_cast<size_t>(line) >= starts.size()) return 0;
-    const std::string_view sv = line_view(text, line);
-    const size_t clamped = std::min(byte_in_line, sv.size());
-    if (non_ascii[static_cast<size_t>(line)] == 0) return static_cast<int>(clamped);
-    return utf16_len(sv.substr(0, clamped), false);
-}
 
 // Zero-copy arena JSON-RPC tape parser.
 namespace {
@@ -806,7 +587,7 @@ private:
 
 }  // namespace
 
-bool LspJsonTape::parse(std::string_view src) {
+bool JsonTape::parse(std::string_view src) {
     src_ = {};
     root_ = 0;
     err_ = {};
@@ -820,7 +601,7 @@ bool LspJsonTape::parse(std::string_view src) {
     return tp.run(root_, err_);
 }
 
-std::string_view LspJsonTape::str_view(uint32_t idx) const {
+std::string_view JsonTape::str_view(uint32_t idx) const {
     if (idx == 0 || idx >= nodes_.size()) return {};
     const TapeNode &nd = nodes_[idx];
     if (nd.kind == JKind::StrRaw) return src_.substr(nd.raw_off, nd.raw_len);
@@ -828,7 +609,7 @@ std::string_view LspJsonTape::str_view(uint32_t idx) const {
     return {};
 }
 
-std::string_view LspJsonTape::raw_json_slice(uint32_t idx) const {
+std::string_view JsonTape::raw_json_slice(uint32_t idx) const {
     if (idx == 0 || idx >= nodes_.size()) return "null";
     const TapeNode &nd = nodes_[idx];
     if (nd.kind == JKind::StrRaw) {
@@ -842,7 +623,7 @@ std::string_view LspJsonTape::raw_json_slice(uint32_t idx) const {
     return src_.substr(nd.raw_off, nd.raw_len);
 }
 
-bool LspJsonTape::exact_int32(uint32_t idx, int &out) const {
+bool JsonTape::exact_int32(uint32_t idx, int &out) const {
     if (idx == 0 || idx >= nodes_.size()) return false;
     const TapeNode &nd = nodes_[idx];
     if (nd.kind == JKind::Int) {
@@ -864,12 +645,12 @@ bool LspJsonTape::exact_int32(uint32_t idx, int &out) const {
     return false;
 }
 
-int LspJsonTape::int_or(uint32_t idx, int fallback) const {
+int JsonTape::int_or(uint32_t idx, int fallback) const {
     int v = fallback;
     return exact_int32(idx, v) ? v : fallback;
 }
 
-uint32_t LspJsonTape::get(uint32_t obj_idx, std::string_view key) const {
+uint32_t JsonTape::get(uint32_t obj_idx, std::string_view key) const {
     if (!is_object(obj_idx)) return 0;
     uint32_t cur = nodes_[obj_idx].first_child;
     uint32_t found = 0;
@@ -899,21 +680,6 @@ void JsonWriter::uint64(uint64_t v) {
     (void)ec;
     buf_.append(tmp, static_cast<size_t>(ptr - tmp));
     need_comma_ = true;
-}
-
-void JsonWriter::lsp_range(int l1, int c1, int l2, int c2) {
-    begin_obj();
-    key_lit("start");
-    begin_obj();
-    key_lit("line"); int64(l1);
-    key_lit("character"); int64(c1);
-    end_obj();
-    key_lit("end");
-    begin_obj();
-    key_lit("line"); int64(l2);
-    key_lit("character"); int64(c2);
-    end_obj();
-    end_obj();
 }
 
 void JsonWriter::write_escaped_string(std::string &out, std::string_view s) {
@@ -948,154 +714,4 @@ void JsonWriter::write_escaped_string(std::string &out, std::string_view s) {
     out.push_back('"');
 }
 
-// Pipelined frame reader and single-write frame sender.
-bool LspFrameReader::fill_more() {
-    if (eof_) return false;
-    compact_if_needed();
-    char chunk[65536];
-#if defined(_WIN32)
-    const int got = _read(_fileno(stdin), chunk, sizeof(chunk));
-    if (got <= 0) {
-        eof_ = true;
-        return false;
-    }
-    rx_.append(chunk, static_cast<size_t>(got));
-    return true;
-#else
-    for (;;) {
-        const ssize_t got = ::read(STDIN_FILENO, chunk, sizeof(chunk));
-        if (got > 0) {
-            rx_.append(chunk, static_cast<size_t>(got));
-            return true;
-        }
-        if (got == 0) {
-            eof_ = true;
-            return false;
-        }
-        if (errno == EINTR) continue;
-        eof_ = true;
-        return false;
-    }
-#endif
-}
-
-void LspFrameReader::compact_if_needed() {
-    if (pos_ == 0) return;
-    if (pos_ == rx_.size()) {
-        rx_.clear();
-        pos_ = 0;
-    } else if (pos_ >= 65536 || pos_ * 2 >= rx_.size()) {
-        rx_.erase(0, pos_);
-        pos_ = 0;
-    }
-}
-
-FrameStatus LspFrameReader::next_frame(std::string_view &out_body, std::string &out_err) {
-    compact_if_needed();
-    size_t content_len = 0;
-    bool have_len = false;
-    size_t header_count = 0;
-
-    for (;;) {
-        const size_t nl = rx_.find('\n', pos_);
-        if (nl == std::string::npos) {
-            if (rx_.size() - pos_ > 8192) {
-                out_err = "header line exceeds maximum length";
-                return FrameStatus::HeaderError;
-            }
-            if (!fill_more()) {
-                if (pos_ == rx_.size() && !have_len) return FrameStatus::Eof;
-                out_err = "missing Content-Length header";
-                return FrameStatus::HeaderError;
-            }
-            continue;
-        }
-        if (nl - pos_ > 8192) {
-            out_err = "header line exceeds maximum length";
-            return FrameStatus::HeaderError;
-        }
-        size_t line_end = nl;
-        if (line_end > pos_ && rx_[line_end - 1] == '\r') --line_end;
-        const std::string_view line(rx_.data() + pos_, line_end - pos_);
-        pos_ = nl + 1;
-
-        if (line.empty()) break;  // end of headers
-        if (++header_count > 64) {
-            out_err = "too many message headers";
-            return FrameStatus::HeaderError;
-        }
-
-        const size_t colon = line.find(':');
-        if (colon == 0 || colon == std::string_view::npos) {
-            out_err = "malformed message header";
-            return FrameStatus::HeaderError;
-        }
-        const std::string_view raw_name = line.substr(0, colon);
-        for (unsigned char ch : raw_name) {
-            if (!std::isalnum(ch) && ch != '-' && ch != '_') {
-                out_err = "malformed message header";
-                return FrameStatus::HeaderError;
-            }
-        }
-        bool is_cl = (raw_name.size() == 14);
-        if (is_cl) {
-            static constexpr char want[] = "content-length";
-            for (size_t i = 0; i < 14; ++i) {
-                char c = raw_name[i];
-                if (c >= 'A' && c <= 'Z') c = static_cast<char>(c - 'A' + 'a');
-                if (c != want[i]) { is_cl = false; break; }
-            }
-        }
-        if (!is_cl) continue;
-        if (have_len) {
-            out_err = "duplicate Content-Length header";
-            return FrameStatus::HeaderError;
-        }
-        std::string_view val = line.substr(colon + 1);
-        while (!val.empty() && (val.front() == ' ' || val.front() == '\t')) val.remove_prefix(1);
-        while (!val.empty() && (val.back() == ' ' || val.back() == '\t')) val.remove_suffix(1);
-        if (val.empty()) {
-            out_err = "invalid Content-Length header";
-            return FrameStatus::HeaderError;
-        }
-        const auto parsed = std::from_chars(val.data(), val.data() + val.size(), content_len);
-        if (parsed.ec != std::errc{} || parsed.ptr != val.data() + val.size() ||
-            content_len == 0 || content_len > kMaxFrameBytes) {
-            out_err = "invalid Content-Length header";
-            return FrameStatus::HeaderError;
-        }
-        have_len = true;
-    }
-
-    if (!have_len) {
-        out_err = "missing Content-Length header";
-        return FrameStatus::HeaderError;
-    }
-
-    while (rx_.size() - pos_ < content_len) {
-        if (!fill_more()) {
-            out_err = "truncated JSON-RPC body";
-            return FrameStatus::HeaderError;
-        }
-    }
-
-    out_body = std::string_view(rx_.data() + pos_, content_len);
-    pos_ += content_len;
-    return FrameStatus::Ok;
-}
-
-void send_frame(std::string_view json_body) {
-    char hdr[64];
-    char *p = hdr;
-    std::memcpy(p, "Content-Length: ", 16);
-    p += 16;
-    auto [endp, ec] = std::to_chars(p, hdr + sizeof(hdr) - 4, json_body.size());
-    (void)ec;
-    std::memcpy(endp, "\r\n\r\n", 4);
-    const size_t hdr_len = static_cast<size_t>((endp + 4) - hdr);
-    std::fwrite(hdr, 1, hdr_len, stdout);
-    if (!json_body.empty()) std::fwrite(json_body.data(), 1, json_body.size(), stdout);
-    std::fflush(stdout);
-}
-
-}  // namespace lsp_wire
+}  // namespace json_wire

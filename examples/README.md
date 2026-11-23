@@ -14,4 +14,4 @@ Run any file from the repository root after `make -j4`:
 
 64 smaller feature programs live under `lang/examples/` (notably
 `lang/examples/newcomer.brat` and `lang/examples/logstat.brat`), and larger
-worked programs are in [docs/guide/by-example.md](../docs/guide/by-example.md).
+programs are in this directory.

@@ -219,7 +219,7 @@ def lex_source(src):
 _CLI_SUBS = {
     "ast", "lex", "check", "flat", "cc", "libs", "build", "run",
     "fmt", "emit-c", "test", "pkg", "dist", "new", "deps", "api",
-    "bindgen", "ffi", "lsp", "mcp", "explain", "doc", "bundle", "version",
+    "bindgen", "ffi", "mcp", "explain", "doc", "bundle", "version",
 }
 
 

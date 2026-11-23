@@ -2067,7 +2067,30 @@ BFN void map_idx_put(Map *m, bint pos, uint64_t h) {
 BFN Val vstruct(Map *m) { Val r; r.tag = V_STRUCT; r.sso = 0; r.imm = (m && BIS_ARENA((BHead *)m - 1)) ? 1u : 0u; r.as.map = m; return r; }
 
 
+static Val vown_copy(Val v);
+static inline int barena_val(Val v) {
+    switch (v.tag) {
+    case V_STR: return !v.sso && v.as.str && BIS_ARENA((BHead *)v.as.str - 1);
+    case V_VEC: return v.as.vec && BIS_ARENA((BHead *)v.as.vec - 1);
+    case V_STRUCT: return v.as.map && BIS_ARENA((BHead *)v.as.map - 1);
+    case V_TAG: return v.as.tv && BIS_ARENA((BHead *)v.as.tv - 1);
+    default: return 0;
+    }
+}
+static inline Val barena_heap(Val x) {
+    if (!barena_depth || !barena_val(x)) return x;
+    int saved = barena_depth;
+    barena_depth = 0;
+    Val r = vown_copy(x);
+    barena_depth = saved;
+    return verr_pending() ? x : r;
+}
+static inline Val barena_out(Val x, const void *dst) {
+    if (!dst || BIS_ARENA((const BHead *)dst - 1)) return x;
+    return barena_heap(x);
+}
 BFN void vec_push_raw(Vec *v, Val x) {
+    x = barena_out(x, v);
     if (v->len >= v->cap) {
         bint oldcap = v->cap;
         int ina = BIS_ARENA((BHead *)v - 1);
@@ -2369,6 +2392,8 @@ BFN Val vmap_bad_key_err(void) {
     return vtagv("err", e);
 }
 BFN void map_set_v(Map *m, Val k, Val v) {
+    k = barena_out(k, m);
+    v = barena_out(v, m);
     if (vmap_key_bad(k)) { vrc_dec(k); vrc_dec(v); m->bad_key = 1; return; }  /* the caller answers */
     BRAT_CTR_LOCK_OBJ(m);
     if (!m->slots && !m->hashes && !m->shape && !m->inline_vals && m->used < m->cap) {
@@ -2722,6 +2747,7 @@ BFN Val vset_at(Val m, Val k, Val v) {
             vraise("index out of range");
             return vunwind;
         }
+        v = barena_out(v, m.as.vec);
         Val old = m.as.vec->items[i];
         m.as.vec->items[i] = v;
         BRAT_CTR_UNLOCK_OBJ(m.as.vec);

@@ -115,7 +115,6 @@ jobs:
         working-directory: editors/vscode
         run: |
           set -euo pipefail
-          node --check extension.js
           npm install --no-audit --no-fund
           npx --yes @vscode/vsce package --allow-missing-repository --no-dependencies -o ../../brat-lang.vsix || \
             npx --yes @vscode/vsce package --allow-missing-repository -o ../../brat-lang.vsix

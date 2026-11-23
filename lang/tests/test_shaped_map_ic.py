@@ -363,7 +363,7 @@ def test_adversarial_fuzzing_parsers() -> None:
         check(r_pkg.returncode != 0 and not os.path.exists(os.path.join(td, "escape.brat")),
               "path traversal tarball must be rejected cleanly")
 
-        # 4. Fuzz LSP & MCP wire framing
+        # 4. Fuzz MCP wire framing
         frames = [
             b"Content-Length: -42\r\n\r\n{}",
             b"Content-Length: 18446744073709551615\r\n\r\n{}",
@@ -371,9 +371,8 @@ def test_adversarial_fuzzing_parsers() -> None:
             b'{"jsonrpc":"2.0","id":1,"method":"initialize","params":' + (b"[" * 200) + b"\n",
         ]
         for idx, fr in enumerate(frames):
-            rl = subprocess.run([BIN, "lsp"], input=fr, capture_output=True, timeout=15)
             rm = subprocess.run([BIN, "mcp"], input=fr, capture_output=True, timeout=15)
-            check(rl.returncode >= 0 and rm.returncode >= 0, f"LSP/MCP crashed on frame {idx}")
+            check(rm.returncode >= 0, f"MCP crashed on frame {idx}")
 
         # 5. Fuzz BRAT lexer/parser with malformed syntax & truncated UTF-8
         bad_srcs = [

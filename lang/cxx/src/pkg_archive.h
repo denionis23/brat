@@ -6,7 +6,7 @@
 #include <utility>
 #include <vector>
 
-#include "lsp_wire.h"
+#include "json_wire.h"
 
 namespace pkg_archive {
 
@@ -59,7 +59,7 @@ bool extract_tar_package(std::string_view raw_bytes,
 bool resolve_archive_graph(std::string_view root_spec,
                            bool allow_file_root,
                            const std::string &target,
-                           const lsp_wire::LspJsonTape &lock_tape,
+                           const json_wire::JsonTape &lock_tape,
                            bool lock_exists,
                            std::vector<ArchivePlanItem> &out_plan,
                            std::string &error);

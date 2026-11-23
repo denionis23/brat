@@ -163,6 +163,7 @@ struct FnSummary {
     std::set<std::string> global_writes;
     std::set<std::string> global_reads;
     std::set<size_t> ret_params;
+    std::set<size_t> spawned_idx;
     View body;
     std::map<std::string, std::string> alias;
 };
@@ -190,6 +191,8 @@ struct TouchDetail {
     std::set<std::string> chan_recvs;
 };
 
+const std::map<std::string, const Expr *> *g_closure_lets = nullptr;
+
 TouchDetail touch_detail(const Stmt &s, const FnSummaries *fns = nullptr) {
     TouchDetail out;
     auto write_place = [&](const Expr *pl) {
@@ -216,8 +219,14 @@ TouchDetail touch_detail(const Stmt &s, const FnSummaries *fns = nullptr) {
     std::vector<const Expr *> exprs = stmt_exprs(s);
     std::vector<const Expr *> nodes;
     for (const Expr *e : exprs) each_node(e, nodes);
-    for (const Expr *n : nodes) {
+    std::set<std::string> expanded;
+    for (size_t ni = 0; ni < nodes.size(); ni++) {
+        const Expr *n = nodes[ni];
         if (!n) continue;
+        if (n->k == EK::Var && g_closure_lets && expanded.insert(n->a).second) {
+            auto cl = g_closure_lets->find(n->a);
+            if (cl != g_closure_lets->end()) each_node(cl->second, nodes);
+        }
         if ((n->k == EK::Closure || n->k == EK::ParFor) && n->fn) {
             std::vector<const Stmt *> inner;
             all_stmts(view(n->fn->body), inner);
@@ -481,7 +490,8 @@ bool is_acyclic_expr(const Expr *e, const std::map<std::string, std::string> &va
     return t && is_acyclic_type(*t, acyc_structs);
 }
 
-void alias_map(const View &body, std::map<std::string, std::string> &out) {
+void alias_map(const View &body, std::map<std::string, std::string> &out,
+               const FnSummaries *fns = nullptr) {
     for (const Stmt *s : body) {
         if (!s) continue;
         if (s->k == SK::Let && s->e1) {
@@ -489,12 +499,19 @@ void alias_map(const View &body, std::map<std::string, std::string> &out) {
             if (r.empty() && s->e1->k == EK::Call && kPtrAliasCalls.count(s->e1->a) &&
                 !s->e1->kids.empty())
                 r = root(s->e1->kids[0].get());
+            if (r.empty() && fns && s->e1->k == EK::Call && fns->count(s->e1->a)) {
+                for (size_t i : fns->at(s->e1->a).ret_params) {
+                    if (i >= s->e1->kids.size()) continue;
+                    r = root(s->e1->kids[i].get());
+                    if (!r.empty()) break;
+                }
+            }
             if (!r.empty() && r != s->a) out[s->a] = r;
         }
         if (s->k == SK::Try && s->opt1) out.erase(*s->opt1);
-        alias_map(view(s->body), out);
-        alias_map(view(s->body2), out);
-        alias_map(else_of(*s), out);
+        alias_map(view(s->body), out, fns);
+        alias_map(view(s->body2), out, fns);
+        alias_map(else_of(*s), out, fns);
     }
 }
 
@@ -808,6 +825,12 @@ std::string first_touched(const Event &a, const Event &b) {
     return clash.empty() ? std::string() : *clash.begin();
 }
 
+bool spawns_closure(const Stmt &s, const FnSummaries *fns) {
+    if (!fns || s.k != SK::Expr || !s.e1 || s.e1->k != EK::Call) return false;
+    auto it = fns->find(s.e1->a);
+    return it != fns->end() && !it->second.spawned_idx.empty();
+}
+
 void collect(const View &body, std::vector<Event> &events,
              std::vector<std::pair<size_t, size_t>> &loops, const void *loop,
              const FnSummaries *fns = nullptr, SpawnEnv env = {}) {
@@ -871,6 +894,10 @@ void collect(const View &body, std::vector<Event> &events,
         ev.line = s->line;
         ev.loop = loop;
         ev.join = (s->k == SK::Expr && s->e1 && s->e1->k == EK::Call && s->e1->a == "join_all");
+        if (spawns_closure(*s, fns)) {
+            ev.spawn = true;
+            ev.member_begin = ev.member_end = events.size() + 1;
+        }
         events.push_back(std::move(ev));
         if (s->k == SK::While || s->k == SK::ForRange || s->k == SK::ForIter) {
             size_t start = events.size();
@@ -905,9 +932,23 @@ void races(const View &body, std::vector<BorrowDiag> &out,
     std::vector<Event> events;
     std::vector<std::pair<size_t, size_t>> loops;
     std::map<std::string, std::string> alias;
-    alias_map(body, alias);
+    alias_map(body, alias, fns);
     ContainsMap contains = containment_graph(body, alias, fns);
+    std::map<std::string, const Expr *> closure_lets;
+    {
+        std::vector<const Stmt *> all;
+        all_stmts(body, all);
+        std::map<std::string, int> lets;
+        for (const Stmt *st : all)
+            if ((st->k == SK::Let || st->k == SK::LetTmp) && !st->a.empty()) lets[st->a]++;
+        for (const Stmt *st : all)
+            if (st->k == SK::Let && st->e1 && st->e1->k == EK::Closure && st->e1->fn &&
+                lets[st->a] == 1)
+                closure_lets[st->a] = st->e1.get();
+    }
+    g_closure_lets = &closure_lets;
     collect(body, events, loops, nullptr, fns);
+    g_closure_lets = nullptr;
 
     std::map<std::string, std::set<std::string>> chan_payloads;
     for (const Event &e : events) {
@@ -995,6 +1036,31 @@ void races(const View &body, std::vector<BorrowDiag> &out,
     }
 }
 
+std::set<size_t> spawned_params(const FnDecl &f) {
+    std::set<size_t> out;
+    std::vector<const Stmt *> all;
+    all_stmts(view(f.body), all);
+    for (const Stmt *st : all) {
+        if (st->k != SK::Spawn) continue;
+        std::vector<const Stmt *> inner;
+        all_stmts(view(st->body), inner);
+        for (const Stmt *x : inner) {
+            std::vector<const Expr *> nodes;
+            for (const Expr *e : stmt_exprs(*x)) each_node(e, nodes);
+            for (const Expr *n : nodes) {
+                if (!n || n->k != EK::Call) continue;
+                for (size_t i = 0; i < f.params.size(); i++) {
+                    bool passed = n->a == f.params[i].name;
+                    for (const auto &k : n->kids)
+                        if (k && k->k == EK::Var && k->a == f.params[i].name) passed = true;
+                    if (passed) out.insert(i);
+                }
+            }
+        }
+    }
+    return out;
+}
+
 void register_fns(const View &body, FnSummaries &fns) {
     for (const Stmt *s : body) {
         if (!s) continue;
@@ -1028,6 +1094,7 @@ void register_fns(const View &body, FnSummaries &fns) {
                 }
                 sum.body = view(f.body);
                 alias_map(sum.body, sum.alias);
+                sum.spawned_idx = spawned_params(f);
                 fns[*f.name] = std::move(sum);
                 register_fns(view(f.body), fns);
             }

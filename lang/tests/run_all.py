@@ -124,9 +124,7 @@ def parse_shard(value):
 
 _HEAVY_SUITES = (
     "test_channels.py",
-    "test_docs_examples.py",
     "test_agreement.py",
-    "test_lsp_incremental.py",
     "test_env_confinement.py",
     "test_ecosystem.py",
     "test_http_server_closures.py",

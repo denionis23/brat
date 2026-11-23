@@ -986,6 +986,7 @@ struct Emitter {
     // answer out each time made emission quadratic in the size of a program.
     std::shared_ptr<const std::set<std::string>> heap_prog, heap_local;
     uint64_t heap_prog_at = 0;
+    uint64_t decl_epoch = 0;
     std::vector<std::string> heap_local_syms;
     std::optional<std::set<std::string>> heap_local_cap;
     V call_result(std::vector<std::string> pre, const std::string &vec, const std::string &call);
@@ -1786,10 +1787,9 @@ void Emitter::compute_fast() {
                 mixed_fvar = false;
                 walk_fvars(view(fns[name].decl->body), true);
             }
-            auto snapshot = cand;   // int_body mutates a copy of candidate vars
             std::vector<bool> returned;
             const bool ok = !mixed_fvar &&
-                            int_body(view(fns[name].decl->body), snapshot, kind, intvars,
+                            int_body(view(fns[name].decl->body), cand, kind, intvars,
                                      vvars, &returned);
             bool any_int = false;
             for (bool r : returned) any_int = any_int || r;
@@ -1801,20 +1801,20 @@ void Emitter::compute_fast() {
                 std::set<std::string> non_bool_pnames;
                 for (const auto &pn : pnames)
                     if (!fboolvars.count(pn)) non_bool_pnames.insert(pn);
-                if (pure_int_returns(view(fns[name].decl->body), snapshot, non_bool_pnames, vvars))
+                if (pure_int_returns(view(fns[name].decl->body), cand, non_bool_pnames, vvars))
                     bad_bool_ret = false;
             }
             bool bad_fdyn = (kind == "f64_dyn") &&
                             ((ret_ann != "bool" && any_int) ||
                              (ret_ann != "f64" && ret_ann != "bool" &&
-                              !pure_float_returns(view(fns[name].decl->body), snapshot, pnames)));
+                              !pure_float_returns(view(fns[name].decl->body), cand, pnames)));
             if (!ok || ((kind == "f64" || kind == "f64v") && ret_ann != "bool" && any_int) ||
                 bad_bool_ret || bad_fdyn ||
                 // Without `-> i64` or `-> bool` the wrapper answers `vint`, so
                 // every return has to be an int: `return a < b` is a bool.
                 ((kind == "i64" || kind == "i64v" || kind == "i64_dyn" || kind == "i64v_dyn") &&
                  !has_ret_ann &&
-                 !pure_int_returns(view(fns[name].decl->body), snapshot, pnames, vvars))) {
+                 !pure_int_returns(view(fns[name].decl->body), cand, pnames, vvars))) {
                 fastint.erase(name);
                 fastkinds.erase(name);
                 it = cand.erase(it);
@@ -4228,10 +4228,7 @@ std::set<std::string> Emitter::heap_returns_prog() {
 uint64_t Emitter::heap_prog_stamp() const {
     uint64_t h = 1469598103934665603ull;
     auto mix = [&h](uint64_t v) { h = (h ^ v) * 1099511628211ull; };
-    for (const auto &[name, entry] : fns) {
-        mix(static_cast<uint64_t>(reinterpret_cast<uintptr_t>(entry.decl)));
-        mix(entry.ctor ? 1 : 0);
-    }
+    mix(decl_epoch);
     mix(fns.size());
     mix(fn_ret.size());
     mix(structs.size());
@@ -6564,7 +6561,10 @@ void Emitter::st(const Stmt &s, const std::string &ind) {
             own = Own::Owned;
         }
         if (reclaim.count(tgt) && !global_binding && own == Own::Copy) own = Own::Owned;
-        if (global_binding) own = Own::Copy;
+        if (global_binding) {
+            own = Own::Copy;
+            v.val = cat("barena_heap(", v.val, ")");
+        }
         std::string cn = var_def(tgt, own);
         assigned.insert(tgt);
         // Do not overwrite the target binding if evaluating the RHS raised an error.
@@ -7276,8 +7276,7 @@ std::pair<std::set<std::string>, std::set<std::string>> reclaim_names(
     std::set<std::string> reclaim = has_set;
     std::set<std::string> relet;
     for (const auto &[n, cnt] : for_iter_cnt) {
-        if (cnt > 0 && (params.count(n) || let_cnt[n] > 0 || has_set.count(n)))
-            reclaim.insert(n);
+        if (cnt > 0) reclaim.insert(n);
     }
     for (const auto &[n, cnt] : for_range_cnt) {
         if (cnt > 0 && (params.count(n) || let_cnt[n] > 0 || has_set.count(n)))
@@ -8608,6 +8607,7 @@ void Emitter::run_shadow_disambig() {
             map_cloned_nested_stmts(old_ptr->body, copy.body, replaced);
             sra_fns.push_back(std::move(copy));
             entry.decl = &sra_fns.back();
+            decl_epoch++;
         }
     }
     for (auto &l : late) {
@@ -8652,6 +8652,7 @@ void Emitter::run_sra() {
         if (sra_rewrite_decl(name, copy)) {
             sra_fns.push_back(std::move(copy));
             entry.decl = &sra_fns.back();
+            decl_epoch++;
             replaced.insert(moved.begin(), moved.end());
         }
     }

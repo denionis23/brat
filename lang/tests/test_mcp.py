@@ -116,7 +116,6 @@ r = c.request("tools/call", {"name": "brat_check", "arguments": {"path": bad}})
 check(r["result"]["isError"] is True, "bad check is an error result, not a crash")
 payload = json.loads(r["result"]["content"][0]["text"])
 codes = [(d["code"], d["line"]) for d in payload["diagnostics"]]
-# `check --json` lines are 1-based, unlike LSP positions
 check(codes == [("W0001", 3), ("E0382", 4)], "diagnostics: %r" % (codes,))
 check(payload["diagnostics"][1]["helps"], "helps survives the round trip")
 

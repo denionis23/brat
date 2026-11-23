@@ -1497,18 +1497,17 @@ BFN unsigned vcp_lower(unsigned c) {
     return mapped;
 }
 
+static int vcp_cased(unsigned c) {
+    return vcp_lower(c) || vcp_upper(c) || c == 0xDF || c == 0x130 || c == 0x3C2;
+}
+
 BFN unsigned vcp_lower_ctx(unsigned c, unsigned prev, const char *rest) {
     unsigned out = vcp_lower(c);
     if (!out) return 0;
     if (out == 0x3C3) {
-
-        int prev_cased = (prev >= 'A' && prev <= 'Z') || (prev >= 0x391 && prev <= 0x3A9)
-                      || (prev >= 0x410 && prev <= 0x44F);
         unsigned next = 0;
         if (*rest) vcp_next(rest, &next);
-        int next_cased = (next >= 'a' && next <= 'z') || (next >= 'A' && next <= 'Z')
-                      || (next >= 0x3B1 && next <= 0x3C9) || (next >= 0x430 && next <= 0x44F);
-        if (prev_cased && !next_cased) return 0x3C2;
+        if (vcp_cased(prev) && !vcp_cased(next)) return 0x3C2;
     }
     return out;
 }

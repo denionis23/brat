@@ -1,4 +1,4 @@
-// Diagnostic code catalog and message classifier shared by CLI and LSP.
+// Diagnostic code catalog and message classifier.
 #pragma once
 
 #include <string>

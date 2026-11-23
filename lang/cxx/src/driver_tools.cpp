@@ -53,8 +53,7 @@
 #include "ffi_native.h"
 #include "ir.h"
 #include "lexer.h"
-#include "lsp.h"
-#include "lsp_wire.h"
+#include "json_wire.h"
 #include "module.h"
 #include "parser.h"
 #include "pkg_archive.h"
@@ -63,7 +62,7 @@
 
 static std::string json_esc(std::string_view s) {
     std::string quoted;
-    lsp_wire::JsonWriter::write_escaped_string(quoted, s);
+    json_wire::JsonWriter::write_escaped_string(quoted, s);
     return quoted.size() >= 2 ? quoted.substr(1, quoted.size() - 2) : std::string();
 }
 

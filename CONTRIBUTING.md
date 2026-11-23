@@ -37,7 +37,6 @@ Formatting across all `.brat` files is checked with:
 - Performance changes must include `make bench` (`python3 scripts/bench.py
   --runs 5`) numbers before and after, along with CPU model, OS, and C compiler
   version.
-- Documentation changes must pass `python3 lang/tests/test_docs_examples.py` and
-  `python3 lang/tests/test_newcomer.py`.
+- A change in behaviour updates `lang/spec/SPEC.md` in the same commit.
 - Keep compiled binaries, `.brat-build-*` staging directories, and scratch files
   out of commits.

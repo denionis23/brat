@@ -29,7 +29,7 @@ container or sandbox (`rlimit`, cgroups, mount namespaces, seccomp).
    `on`) is set, built-in file operations (`read_file`, `write_file`,
    `fs_rename`, `fs_remove`) and `sql_open` confine relative paths to the
    program's module root using `openat`/`O_NOFOLLOW` leaf checks and reject NUL
-   bytes (see [docs/guide/cli.md](docs/guide/cli.md)). `sql_open` also rejects
+   bytes (see sections 15 and 17 of [the spec](lang/spec/SPEC.md)). `sql_open` also rejects
    `file:` URIs, checks `-wal`, `-shm`, and `-journal` sidecars against symlink
    swaps, verifies `(st_dev, st_ino)` identity across
    `sqlite3_open_v2(SQLITE_OPEN_NOFOLLOW)`, enables `SQLITE_DBCONFIG_DEFENSIVE`,
@@ -43,12 +43,11 @@ container or sandbox (`rlimit`, cgroups, mount namespaces, seccomp).
    IPv4-embedded IPv6 addresses. Default `env_get` filtering uses a denylist of
    common secret variable names; set `BRAT_ENV_DENY_ALL=1` or `BRAT_ENV_ALLOW`
    explicitly for sensitive environments. Subprocess execution (`proc_run`) is
-   disabled unless `BRAT_EXEC=1` or `BRAT_EXEC_ALLOW` is set. `brat-cxx lsp`
-   (16 MiB message cap) and `brat-cxx mcp` (2 MiB tool output cap) bound
-   protocol payloads, and `BRAT_CC_TIMEOUT_MS` (default 120,000 ms) bounds child
+   disabled unless `BRAT_EXEC=1` or `BRAT_EXEC_ALLOW` is set. `brat-cxx mcp`
+   (2 MiB tool output cap) bounds protocol payloads, and `BRAT_CC_TIMEOUT_MS` (default 120,000 ms) bounds child
    C compiler calls.
 
-See [docs/project/LEDGER.md](docs/project/LEDGER.md) for current checker and
+See sections 17 and 19 of [the spec](lang/spec/SPEC.md) for current checker and
 platform limits.
 
 ## Reporting defects

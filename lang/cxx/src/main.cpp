@@ -50,8 +50,7 @@
 #include "ffi_native.h"
 #include "ir.h"
 #include "lexer.h"
-#include "lsp.h"
-#include "lsp_wire.h"
+#include "json_wire.h"
 #include "module.h"
 #include "parser.h"
 #include "pkg_archive.h"
@@ -917,7 +916,7 @@ std::string build_ffi_contract_c(const std::vector<SourceFile> &files,
         }
     }
 
-    auto write_opt_str = [](lsp_wire::JsonWriter &w, const std::optional<std::string> &v) {
+    auto write_opt_str = [](json_wire::JsonWriter &w, const std::optional<std::string> &v) {
         if (v) w.str(*v);
         else w.null_val();
     };
@@ -954,7 +953,7 @@ std::string build_ffi_contract_c(const std::vector<SourceFile> &files,
         bp.replace_extension(".bratbind");
         std::string raw_bind;
         if (read_file(bp.string(), raw_bind)) {
-            lsp_wire::LspJsonTape btape;
+            json_wire::JsonTape btape;
             if (btape.parse(raw_bind) && btape.is_object(btape.root())) {
                 const uint32_t hdr = btape.get(btape.root(), "header");
                 const std::string_view hname = btape.str_view(btape.get(hdr, "name"));
@@ -980,7 +979,7 @@ std::string build_ffi_contract_c(const std::vector<SourceFile> &files,
         }
     }
 
-    lsp_wire::JsonWriter jw;
+    json_wire::JsonWriter jw;
     jw.begin_obj();
 
     jw.key_lit("fns");
@@ -1138,7 +1137,7 @@ static bool collect_vendored_c_objects(const std::vector<SourceFile> &files,
                     out_err = "cannot read " + lock_p.string();
                     return false;
                 }
-                lsp_wire::LspJsonTape lock_tape;
+                json_wire::JsonTape lock_tape;
                 if (!lock_tape.parse(raw_lock) || !lock_tape.is_array(lock_tape.root())) {
                     out_err = "cannot parse " + lock_p.string();
                     return false;
@@ -1180,7 +1179,7 @@ static bool collect_vendored_c_objects(const std::vector<SourceFile> &files,
             out_err = "cannot read " + (pkg_dir / "brat.pkg.json").string();
             return false;
         }
-        lsp_wire::LspJsonTape mtape;
+        json_wire::JsonTape mtape;
         if (!mtape.parse(raw_manifest) || !mtape.is_object(mtape.root())) {
             out_err = "invalid JSON in " + (pkg_dir / "brat.pkg.json").string();
             return false;
@@ -1198,7 +1197,7 @@ static bool collect_vendored_c_objects(const std::vector<SourceFile> &files,
             if (read_file(dent.path().string(), hbytes)) {
                 hdr_material += dent.path().filename().string() + ":" + sha256_hex(hbytes) + ";";
                 if (ext == ".bratbind") {
-                    lsp_wire::LspJsonTape btape;
+                    json_wire::JsonTape btape;
                     if (!btape.parse(hbytes) || !btape.is_object(btape.root())) {
                         out_err = "invalid JSON in " + dent.path().string();
                         return false;
@@ -2112,7 +2111,7 @@ std::size_t type_errors(const std::vector<SourceFile> &files, std::size_t i,
 void print_cli_usage(FILE *out) {
     std::fprintf(out,
                  "usage: brat --version\n"
-                 "       brat run|build|dist|check|deps|api|fmt|test|doc|new|emit-c|ffi|bindgen|pkg|explain|lsp|mcp|bundle ...\n"
+                 "       brat run|build|dist|check|deps|api|fmt|test|doc|new|emit-c|ffi|bindgen|pkg|explain|mcp|bundle ...\n"
                  "       brat run FILE [-- args...] [-g|--debug] [-O0|-O1|-O2] [--mem N]\n"
                  "       brat deps FILE [--json|--dot] [-o OUT]\n"
                  "       brat api FILE [--json]\n"
@@ -2130,7 +2129,6 @@ void print_cli_usage(FILE *out) {
                  "       brat pkg add|publish|update|install|verify|list|remove ...\n"
                  "       brat explain [CODE] [--json]\n"
                  "       brat bundle OUTPUT_DIR\n"
-                 "       brat lsp\n"
                  "       brat mcp\n");
 }
 
@@ -2166,17 +2164,6 @@ int brat_cli_main(int argc, char **argv) {
                 return 2;
             }
             return bundle_driver(argv[0], argv[2]);
-        }
-        if (c1 == "lsp") {
-            if (argc == 3 && (std::string(argv[2]) == "--help" || std::string(argv[2]) == "-h")) {
-                std::fprintf(stdout, "usage: brat lsp\n");
-                return 0;
-            }
-            if (argc != 2) {
-                std::fprintf(stderr, "usage: brat lsp\n");
-                return 2;
-            }
-            return run_lsp();
         }
         if (c1 == "mcp") return cmd_mcp(argc, argv);
         if (c1 == "dist") return cmd_dist(argc, argv);

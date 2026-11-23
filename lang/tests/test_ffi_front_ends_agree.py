@@ -55,7 +55,7 @@ STRUCT_C = ("struct P { int64_t x; };\ntypedef struct P P_t;\ntypedef void *hand
             "enum E { E_A, E_B };")
 MAIN = "fn main() -> i64 {\n  return 0\n}\n"
 
-# BRAT declaration, C declaration, must it be accepted. Each is a sentence of ffi.md.
+# BRAT declaration, C declaration, must it be accepted. Each is a rule of SPEC.md section 12.
 PINNED = [
     ("user_data", True,
      "extern \"libz.so\" fn reg(cb: fn(i64, ptr), ud: ptr) -> none",

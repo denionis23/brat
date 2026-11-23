@@ -2,14 +2,12 @@
 
 [![CI](https://github.com/denionis23/brat/actions/workflows/ci.yml/badge.svg)](https://github.com/denionis23/brat/actions/workflows/ci.yml)
 
-BRAT is a small language that compiles to C11. It is meant for command-line
-tools, small services and glue around C libraries, where you want one native
-binary and no garbage collector.
+BRAT compiles to C11. You get one native binary and no garbage collector, which
+suits command-line tools and glue around C libraries.
 
-The idea it is built on: ownership is checked inside one function at a time,
-and whatever crosses a function boundary is reference counted. You get `move`,
-`ref` and `mut`, and a checker that refuses use after move, but no lifetime
-parameters in any signature.
+Ownership is checked inside a single function. Across calls values are
+reference counted, so there are `move`, `ref` and `mut` and a checker that
+rejects use after move, but no lifetimes in signatures.
 
 ```brat run
 fn count_words(text: str) {
@@ -36,11 +34,7 @@ saw: 1
 other: 1
 ```
 
-Every `brat run` and `brat check` block in this README and under `docs/guide/`
-is run in CI by `lang/tests/test_docs_examples.py`, with the output compared
-byte for byte.
-
-## What the checker refuses
+Use after move is caught:
 
 ```brat check
 fn consume(buf: move str) {
@@ -64,98 +58,34 @@ example.brat:7: note: `payload` moved here
 example.brat: 0 type error(s)
 ```
 
-The same pass refuses two `mut` arguments that alias, a container changed
-while a loop walks it, a value written in one `spawn` and read in another, and
-a value that leaves the `arena { ... }` block it was allocated in. The full
-list, with the cases it gets wrong, is in [ownership](docs/guide/ownership.md).
+The check stops at the function boundary, so it proves less than Rust does. Two
+functions can still build a reference cycle between them, and it leaks. What the
+checker covers and what it misses is in the [spec](lang/spec/SPEC.md#8-ownership).
 
-Because the check stops at the function boundary, it proves less than Rust
-does. Two functions can still build a reference cycle between them, and that
-cycle leaks.
+## Build
 
-## Calling C
-
-`brat build` refuses an `extern fn` until it has been compared with the C
-header (`--header`) or with the symbols of the library (`--object`), so a wrong
-width or a missing `const` is a build error. A pointer the C side hands over
-with `-> move ptr` has to be freed or returned on every path:
-
-```brat check
-extern fn malloc(size: usize) -> move ptr
-extern fn free(move p: ptr)
-
-fn load_header(bad: bool) -> i64 {
-  let buf = malloc(64)
-  if bad {
-    return -1
-  }
-  free(move buf)
-  return 0
-}
-
-fn main() -> i64 {
-  return load_header(true)
-}
-```
-
-```diagnostics
-example.brat: 1 error(s), 0 warning(s)
-example.brat:7: error: leaked owned pointer `buf`: free it or return it
-  |     return -1
-example.brat:5: note: `buf` allocated here
-  |   let buf = malloc(64)
-example.brat: 0 type error(s)
-```
-
-More in [C interop](docs/guide/ffi.md).
-
-## Build and run
-
-You need `make`, a C++20 compiler and a C11 compiler. Python is not required to
-build the compiler or to run programs; the test runner and the benchmark script
-use Python 3.
+You need `make`, a C++20 compiler and a C11 compiler. Python 3 is only used by
+the tests and the benchmark script.
 
 ```sh
-git clone https://github.com/denionis23/brat.git brat && cd brat
+git clone https://github.com/denionis23/brat.git && cd brat
 make -j4
 printf 'print(40 + 2)\n' > hello.brat
-./lang/cxx/bin/brat-cxx run hello.brat
+./bin/brat run hello.brat
 ```
 
-```text
-42
-```
+Other commands: `check`, `emit-c`, `build -O2 hello.brat -o hello`.
 
-`make` also links `./bin/brat` to that binary:
+## Docs
 
-```sh
-./bin/brat check hello.brat
-./bin/brat emit-c -O2 hello.brat
-./bin/brat build -O2 hello.brat -o hello && ./hello
-```
-
-## Where to look first
-
-- [Language tour](docs/guide/tour.md): the whole language on one page.
-- [By example](docs/guide/by-example.md): a hash table with inserts and
-  deletes, a doubly linked list and an LRU queue, JSON of unknown size, regexes,
-  SQLite.
-- [Limits](docs/guide/limits.md): overflow, division by zero, recursion depth,
-  what `len` of a string counts.
-- [Built-ins](docs/guide/builtins.md), [standard library](docs/guide/stdlib.md),
-  [modules](docs/guide/modules.md), [CLI and error codes](docs/guide/cli.md).
-- [FAQ](docs/guide/faq.md) and the [specification](lang/spec/SPEC.md).
-- How the compiler works: [architecture](docs/design/ARCHITECTURE.md),
-  [arenas](docs/design/ARENA.md), [`par for`](docs/design/PARFOR.md).
+The whole language, the tools and the known gaps are in [the spec](lang/spec/SPEC.md).
+Programs to start from are in [examples](examples/README.md).
 
 ## Speed
 
-`make bench` runs [`scripts/bench.py`](scripts/bench.py), which compiles and
-times every workload from source.
-
-Median of 5 runs on Linux x86-64 (AMD EPYC 7763, GCC 13.3.0 `-O2`, Go 1.27.3,
-CPython 3.14.2); the two long CPython loops run once. Rows under 0.1 s move by
-up to 20% between two runs of the same build.
+`make bench` builds and times these from source. Median of 5 runs, Linux x86-64
+(AMD EPYC 7763, GCC 13.3.0 `-O2`, Go 1.27.3, CPython 3.14.2). Rows under 0.1 s
+move by up to 20% between runs.
 
 | Workload | C (`gcc -O2`) | Go 1.27 | BRAT (`build -O2`) | CPython 3.14 |
 |---|---:|---:|---:|---:|
@@ -166,48 +96,30 @@ up to 20% between two runs of the same build.
 | `dyn_records(100k)` | n/a | 0.017 s | 0.020 s | 0.047 s |
 | `json_roundtrip(5k)` | n/a | 0.039 s | 0.010 s | 0.067 s |
 
-These are six microbenchmarks. Annotated integer and float code compiles to
-plain C loops and runs like C. Code that builds strings and maps is slower than
-Go, and `fib` pays for the recursion-depth check that turns a stack overflow
-into an error you can catch. The JSON row is fast because `std.json` is written
-in C.
+Typed integer and float code becomes plain C loops. String and map heavy code is
+slower than Go, and `fib` pays for the recursion check that turns a stack
+overflow into a catchable error. The JSON row is fast because `std.json` is C.
 
-## What it is not for
+## Not for
 
-- Kernels and bare metal. The generated C needs `libc` and `libm`.
-- Programs where a reference cycle must never leak. There is no cycle
-  collector; a long-lived doubly linked list is written with indices into a
-  vector, see [by example](docs/guide/by-example.md#5-doubly-linked-lists-and-lru-queues-without-pointer-cycles).
-- Tight generic code. Generics are type-erased: a container holds 16-byte
-  boxed values, except `vec[i64]` and `vec[f64]`.
-- Unsigned arithmetic. Every integer is a wrapping `i64`; other widths exist
-  only at the C boundary.
-- Running code you do not trust. File access is confined to the program's
-  directory by default, which guards against mistakes and is not a sandbox.
+Kernels or bare metal (the output needs libc and libm), programs where a
+reference cycle must never leak, tight generic code (generics are type-erased,
+except `vec[i64]` and `vec[f64]`), unsigned arithmetic (every integer is a
+wrapping `i64`), and running code you don't trust. File access is confined to the
+program directory, which catches mistakes but is not a sandbox.
 
-## How it was built
+## About
 
-Most of the code here was written by an AI model. I decide what the language
-does and what gets merged. The commit history shows it: the first commits are
-large.
-
-The project is experimental and has one maintainer. CI runs on Linux x86-64
-(GCC, Clang, ASan and UBSan), macOS arm64 and Windows x86-64 (MinGW-w64).
+Most of the code was written by an AI model. I decide what the language does and
+what gets merged. It is experimental and has one maintainer. CI runs on Linux
+x86-64 (GCC, Clang, ASan, UBSan), macOS arm64 and Windows x86-64 (MinGW-w64).
 
 ```text
-examples/        programs to start from
-lang/cxx/src/    the compiler, C++20 (26 .cpp files)
-lang/engine/     the runtime, C11 headers
-lang/std/        12 standard-library modules
-lang/examples/   64 small programs, one feature each
-lang/tests/      122 test files
-scripts/         benchmark runner
-editors/vscode/  syntax grammar and LSP client
-docs/            guides and design notes
+lang/cxx/src/    compiler, C++20
+lang/engine/     runtime, C11 headers
+lang/std/        standard library
+lang/examples/   small programs, one feature each
+lang/tests/      tests
 ```
 
-See also [examples](examples/README.md), [security policy](SECURITY.md),
-[contributing](CONTRIBUTING.md), the [roadmap](docs/project/ROADMAP.md) and the
-[known limits](docs/project/LEDGER.md).
-
-License: [Apache-2.0](LICENSE).
+[Security](SECURITY.md), [contributing](CONTRIBUTING.md), [license](LICENSE) (Apache-2.0).

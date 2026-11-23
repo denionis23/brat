@@ -44,6 +44,8 @@ struct FnTable {
     std::map<std::string, bool> umeth;  // method name -> takes `mut self`
     std::set<std::string> owned_ret;   // `extern ... -> move`: free it or return it
     std::map<std::string, std::vector<size_t>> borrows_ret;  // `borrows(p)` param indices
+    std::map<std::string, std::vector<size_t>> param_ret;
+    std::map<std::string, std::vector<std::pair<size_t, std::string>>> field_ret;
     // `extern` results that are scalar slots: a C function returning a number
     // returns a value, so a `let` bound to it is a copy and not a borrow.
     std::set<std::string> scalar_ret;

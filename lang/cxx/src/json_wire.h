@@ -1,5 +1,4 @@
-// Zero-copy SIMD JSON-RPC tape, streaming JsonWriter, O(1) SIMD LineIndex, and
-// pipelined Content-Length framing for brat-lsp v0.4.
+// Zero-copy SIMD JSON tape and streaming JsonWriter.
 #pragma once
 
 #include <cstddef>
@@ -8,51 +7,9 @@
 #include <string_view>
 #include <vector>
 
-namespace lsp_wire {
+namespace json_wire {
 
-inline constexpr size_t kMaxFrameBytes = 16u * 1024u * 1024u;
 inline constexpr size_t kMaxJsonNodes = 1048576u;
-
-// SIMD-accelerated O(1) line and UTF-16 index.
-// `starts[i]` is the byte offset of 0-based line `i` in `text`.
-// `non_ascii[i]` is 1 iff line `i` contains any byte >= 0x80 (UTF-8 multi-byte).
-// On ASCII lines (~99.5% of code), UTF-16 column <-> byte offset is O(1) math.
-struct LineIndex {
-    std::vector<uint32_t> starts;
-    std::vector<uint8_t> non_ascii;
-
-    void build(std::string_view text);
-
-    size_t line_count() const { return starts.size(); }
-
-    // Byte slice of 0-based `line` excluding trailing `\n` and `\r`.
-    std::string_view line_view(std::string_view text, int line) const;
-
-    // Byte offset of start of 0-based `line` (clamped to text.size()).
-    size_t line_start_offset(std::string_view text, int line) const;
-
-    // 0-based line containing `byte_offset` via binary search (O(log L)).
-    int line_of_offset(size_t byte_offset) const;
-
-    // UTF-16 length of arbitrary UTF-8 slice (O(1) when `known_ascii` is true).
-    static int utf16_len(std::string_view s, bool known_ascii = false);
-
-    // UTF-16 length of 0-based `line` in O(1) for ASCII lines.
-    int line_utf16_len(std::string_view text, int line) const;
-
-    // Strict LSP UTF-16 (line, character) -> byte offset in `text`.
-    // Rejects negative coordinates, out-of-range lines/columns, and positions
-    // landing in the middle of a surrogate pair (astral codepoint).
-    bool position_to_offset(std::string_view text, int line, int character,
-                            size_t &out_offset) const;
-
-    // Clamped UTF-16 column -> byte offset within a single line slice `line_str`
-    // (matches `utf16_offset` semantics for cursor queries).
-    size_t clamp_col_in_line(std::string_view text, int line, int character) const;
-
-    // Byte offset within `line` -> UTF-16 column (O(1) on ASCII lines).
-    int byte_to_utf16_col(std::string_view text, int line, size_t byte_in_line) const;
-};
 
 // Zero-copy arena JSON-RPC tape (RFC 8259, zero std::map allocations).
 enum class JKind : uint8_t {
@@ -80,9 +37,9 @@ struct TapeNode {
     } num{0};
 };
 
-class LspJsonTape {
+class JsonTape {
 public:
-    LspJsonTape() {
+    JsonTape() {
         nodes_.reserve(256);
         nodes_.push_back(TapeNode{});  // node 0 is the Null/invalid sentinel
         arena_.reserve(16384);
@@ -217,9 +174,6 @@ public:
         need_comma_ = true;
     }
 
-    // Convenience LSP range helper: `{"start":{"line":L1,"character":C1},"end":{"line":L2,"character":C2}}`
-    void lsp_range(int l1, int c1, int l2, int c2);
-
     static void write_escaped_string(std::string &out, std::string_view s);
 
 private:
@@ -232,29 +186,4 @@ private:
 };
 
 // Pipelined zero-copy frame reader and single-write frame sender.
-enum class FrameStatus : uint8_t {
-    Ok = 0,
-    Eof = 1,
-    HeaderError = 2,
-};
-
-class LspFrameReader {
-public:
-    LspFrameReader() { rx_.reserve(131072); }
-
-    // Reads next Content-Length frame into internal slab and sets `out_body`
-    // as a valid `string_view` until the next `next_frame()` call.
-    FrameStatus next_frame(std::string_view &out_body, std::string &out_err);
-
-private:
-    std::string rx_;
-    size_t pos_ = 0;
-    bool eof_ = false;
-
-    bool fill_more();
-    void compact_if_needed();
-};
-
-void send_frame(std::string_view json_body);
-
-}  // namespace lsp_wire
+}  // namespace json_wire

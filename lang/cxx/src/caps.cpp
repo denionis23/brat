@@ -385,9 +385,13 @@ std::map<std::string, int> index_uses(const View &body) {
 
 
 struct Walk {
-    std::map<std::string, std::vector<Mode>> modes;   // fn -> parameter modes
-    std::map<std::string, std::map<std::string, std::string>> struct_fields;
-    std::map<std::string, std::string> fn_rets;
+    const std::map<std::string, std::vector<Mode>> &modes;
+    const std::map<std::string, std::map<std::string, std::string>> &struct_fields;
+    const std::map<std::string, std::string> &fn_rets;
+    Walk(const std::map<std::string, std::vector<Mode>> &m,
+         const std::map<std::string, std::map<std::string, std::string>> &sf,
+         const std::map<std::string, std::string> &fr)
+        : modes(m), struct_fields(sf), fn_rets(fr) {}
     std::map<std::string, int> last;                  // name -> last use index
     std::vector<BorrowDiag> out;
     int index = 0;
@@ -956,10 +960,7 @@ void one_body(const View &stmts, const std::vector<Param> &params,
               const std::map<std::string, std::string> &fn_rets,
               std::vector<BorrowDiag> &out,
               const std::string &impl_type = "") {
-    Walk walk;
-    walk.modes = modes;
-    walk.struct_fields = struct_fields;
-    walk.fn_rets = fn_rets;
+    Walk walk(modes, struct_fields, fn_rets);
     walk.last = index_uses(stmts);
     State st;
     for (const Param &p : params) {

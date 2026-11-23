@@ -1,5 +1,4 @@
-"""Conformance, borrow, arena, .bri, and LSP tests for Option[T], Result[T, E], and typed enums."""
-import json
+"""Conformance, borrow, arena, and .bri tests for Option[T], Result[T, E], and typed enums."""
 import os
 import subprocess
 import sys
@@ -620,78 +619,5 @@ doc_txt = open(doc_out, encoding="utf-8").read()
 check("Circle(r: i64)" in doc_txt and "Rect(w: i64, h: i64)" in doc_txt,
       f"brat doc missing typed enum variants: {doc_txt}")
 
-
-# 6. LSP verification: `.bri` enum parsing, variant hover, and Result/Option dot-completions.
-def lsp_session(messages):
-    payload = b""
-    for m in messages:
-        body = json.dumps(m).encode("utf-8")
-        payload += f"Content-Length: {len(body)}\r\n\r\n".encode("ascii") + body
-    proc = subprocess.run([NATIVE, "lsp"], input=payload, capture_output=True, timeout=30, env=ENV)
-    out = proc.stdout
-    idx = 0
-    frames = []
-    while idx < len(out):
-        hdr_end = out.find(b"\r\n\r\n", idx)
-        if hdr_end < 0:
-            break
-        hdr = out[idx:hdr_end].decode("ascii", errors="replace")
-        clen = 0
-        for ln in hdr.split("\r\n"):
-            if ln.lower().startswith("content-length:"):
-                clen = int(ln.split(":", 1)[1].strip())
-        body = out[hdr_end + 4:hdr_end + 4 + clen]
-        frames.append(json.loads(body.decode("utf-8")))
-        idx = hdr_end + 4 + clen
-    return frames
-
-
-bri_uri = "file://" + os.path.join(TMP, "mod/shapes.bri")
-bri_text = open(os.path.join(TMP, "mod/shapes.bri"), encoding="utf-8").read()
-app_uri = "file://" + os.path.join(TMP, "lsp_app.brat")
-app_text = """enum Event {
-  Click(x: i64, y: i64),
-  Quit
-}
-
-fn demo(r: Result[i64, str]) -> i64 {
-  let ev = Click(1, 2)
-  r.
-  return 0
-}
-"""
-
-frames = lsp_session([
-    {"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {"rootUri": "file://" + TMP, "capabilities": {}}},
-    {"jsonrpc": "2.0", "method": "initialized", "params": {}},
-    {"jsonrpc": "2.0", "method": "textDocument/didOpen", "params": {
-        "textDocument": {"uri": bri_uri, "languageId": "brat", "version": 1, "text": bri_text}
-    }},
-    {"jsonrpc": "2.0", "method": "textDocument/didOpen", "params": {
-        "textDocument": {"uri": app_uri, "languageId": "brat", "version": 1, "text": app_text}
-    }},
-    {"jsonrpc": "2.0", "id": 2, "method": "textDocument/hover", "params": {
-        "textDocument": {"uri": app_uri}, "position": {"line": 6, "character": 13}
-    }},
-    {"jsonrpc": "2.0", "id": 3, "method": "textDocument/completion", "params": {
-        "textDocument": {"uri": app_uri}, "position": {"line": 7, "character": 4}
-    }},
-    {"jsonrpc": "2.0", "id": 4, "method": "shutdown", "params": None},
-    {"jsonrpc": "2.0", "method": "exit", "params": None},
-])
-
-bri_diags = [f for f in frames if f.get("method") == "textDocument/publishDiagnostics"
-             and f["params"]["uri"] == bri_uri]
-check(bri_diags and bri_diags[-1]["params"]["diagnostics"] == [],
-      f".bri with pub enum produced diagnostics: {bri_diags}")
-
-hover_resp = next((f for f in frames if f.get("id") == 2), None)
-hover_md = hover_resp["result"]["contents"]["value"] if hover_resp and hover_resp.get("result") else ""
-check("Click(x: i64, y: i64) -> Event" in hover_md, f"variant hover mismatch: {hover_md!r}")
-
-comp_resp = next((f for f in frames if f.get("id") == 3), None)
-comp_labels = {it["label"] for it in (comp_resp.get("result") or [])}
-check({"unwrap", "unwrap_or", "is_ok", "is_err"}.issubset(comp_labels),
-      f"Result dot-completions missing methods: {comp_labels}")
 
 print(f"ok: {n} typed enum / Option / Result checks passed")

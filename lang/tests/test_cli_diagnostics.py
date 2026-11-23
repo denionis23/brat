@@ -1,5 +1,5 @@
 """Regression suite for security, runtime memory/bounds, 16-byte Val ABI,
-LSP malformed UTF-8 resilience, FFI gate parity, and decorative-flag cleanup."""
+FFI gate parity, and decorative-flag cleanup."""
 import _cxx
 import _scratch
 import _toolchain as tc_mod
@@ -205,39 +205,5 @@ with open(mod_b, "w", encoding="utf-8") as f:
 mf = subprocess.run([BIN, "check", mod_a, mod_b], capture_output=True, text=True, timeout=30)
 assert mf.returncode == 1 and "type error" in mf.stdout, (mf.returncode, mf.stdout, mf.stderr)
 
-
-# 7. LSP server survives truncated / malformed UTF-8 in didChange without crashing.
-def _lsp_frame(obj):
-    raw = json.dumps(obj).encode("utf-8")
-    return b"Content-Length: %d\r\n\r\n%s" % (len(raw), raw)
-
-
-bad_utf8_doc = b"fn main() -> i64 {\n  // \x80\xf0\n  return 0\n}\n"
-did_open = (
-    b'{"jsonrpc":"2.0","method":"textDocument/didOpen","params":{"textDocument":'
-    b'{"uri":"file:///t.brat","version":1,"text":"'
-    + bad_utf8_doc.replace(b'"', b'\\"').replace(b"\n", b"\\n") + b'"}}}'
-)
-lsp_in = b"".join([
-    _lsp_frame({"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {}}),
-    f"Content-Length: {len(did_open)}\r\n\r\n".encode("ascii") + did_open,
-    _lsp_frame({
-        "jsonrpc": "2.0",
-        "method": "textDocument/didChange",
-        "params": {
-            "textDocument": {"uri": "file:///t.brat", "version": 2},
-            "contentChanges": [{
-                "range": {"start": {"line": 1, "character": 5},
-                          "end": {"line": 1, "character": 7}},
-                "text": "ok",
-            }],
-        },
-    }),
-    _lsp_frame({"jsonrpc": "2.0", "id": 2, "method": "shutdown", "params": None}),
-    _lsp_frame({"jsonrpc": "2.0", "method": "exit", "params": None}),
-])
-lsp_run = subprocess.run([BIN, "lsp"], input=lsp_in, capture_output=True, timeout=30)
-assert lsp_run.returncode == 0 and b'"id":2' in lsp_run.stdout, (
-    lsp_run.returncode, lsp_run.stdout[:300], lsp_run.stderr[:300])
 
 print("CLI DIAGNOSTICS ALL GREEN")

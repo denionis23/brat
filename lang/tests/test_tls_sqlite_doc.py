@@ -1,5 +1,5 @@
 """HTTPS in `std.http`, `std.sqlite`, the embedded FFI contract table with `brat doc`,
-and LSP signature help and workspace symbols."""
+and the MCP doc and optimizer-proof tools."""
 import _cxx
 import _scratch
 
@@ -326,7 +326,6 @@ check(doc_md.returncode == 0 and "# Module `time`" in doc_md.stdout and "days_fr
 print("ok: standalone brat-cxx FFI contract + brat doc")
 
 
-# LSP `signatureHelp` + `workspace/symbol` + MCP `brat_doc`/`brat_opt_proofs`
 class RpcClient:
     def __init__(self, argv):
         self.p = subprocess.Popen(argv, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
@@ -366,49 +365,6 @@ class RpcClient:
             self.p.kill()
 
 
-lsp = RpcClient([BIN, "lsp"])
-l_init = lsp.req("initialize", {"processId": None, "rootUri": None, "capabilities": {}})
-caps = l_init["result"]["capabilities"]
-check("signatureHelpProvider" in caps and caps.get("workspaceSymbolProvider") is True, f"LSP caps: {caps}")
-
-lsp_file = write("lsp_ws/main.brat", '''import std.time
-
-pub fn compute_metric(alpha: i64, beta: str, gamma: f64) -> i64 {
-  return alpha
-}
-
-fn main() -> i64 {
-  let a = compute_metric(10, "hi", 3.14)
-  let d = time.days_from_civil(2026, 11, 1)
-  return a + d
-}
-''')
-lsp_uri = "file://" + lsp_file
-with open(lsp_file, encoding="utf-8") as f:
-    lsp_txt = f.read()
-lsp.send({"jsonrpc": "2.0", "method": "textDocument/didOpen",
-          "params": {"textDocument": {"uri": lsp_uri, "languageId": "brat", "version": 1, "text": lsp_txt}}})
-
-# Cursor after second comma in `compute_metric(10, "hi", ` -> activeParameter == 2
-sh1 = lsp.req("textDocument/signatureHelp",
-              {"textDocument": {"uri": lsp_uri}, "position": {"line": 7, "character": 35}})
-check(sh1["result"] is not None and sh1["result"]["activeParameter"] == 2, f"sigHelp local: {sh1}")
-check("gamma: f64" in sh1["result"]["signatures"][0]["label"], f"sigHelp label: {sh1}")
-
-# Cursor after first comma in `time.days_from_civil(2026, ` -> activeParameter == 1
-sh2 = lsp.req("textDocument/signatureHelp",
-              {"textDocument": {"uri": lsp_uri}, "position": {"line": 8, "character": 37}})
-check(sh2["result"] is not None and sh2["result"]["activeParameter"] == 1, f"sigHelp std.time: {sh2}")
-
-# workspace/symbol query across open workspace + lang/std
-ws = lsp.req("workspace/symbol", {"query": "compute_metric"})
-check(any(s["name"] == "compute_metric" for s in ws["result"]), f"workspace/symbol local: {ws}")
-ws_std = lsp.req("workspace/symbol", {"query": "days_from_civil"})
-check(any(s["name"] == "days_from_civil" for s in ws_std["result"]), f"workspace/symbol std: {ws_std}")
-lsp.req("shutdown")
-lsp.send({"jsonrpc": "2.0", "method": "exit"})
-lsp.close()
-
 # MCP `brat_doc` and `brat_opt_proofs`
 opt_sample = write("mcp_opt/sample.brat", '''fn safe_half(n: i64) -> i64 {
   if n >= 0 {
@@ -426,6 +382,6 @@ mp_res = mcp.req("tools/call", {"name": "brat_opt_proofs", "arguments": {"path":
 mp_json = json.loads(mp_res["result"]["content"][0]["text"])
 check(mp_res["result"]["isError"] is False and mp_json["count"] == 1, f"mcp opt proofs: {mp_json}")
 mcp.close()
-print("ok: LSP signatureHelp/workspaceSymbol + MCP doc/opt_proofs")
+print("ok: MCP doc/opt_proofs")
 
 print(f"ECOSYSTEM ALL GREEN ({asserts} asserts)")

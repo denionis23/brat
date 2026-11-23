@@ -57,7 +57,6 @@ secrets/
 certs/
 # Public trust bundle and documentation examples are source inputs.
 !lang/engine/cacert.pem
-!docs/**/*.example.pem
 !.env.example
 
 # Tool and editor state.
@@ -70,7 +69,6 @@ Thumbs.db
 *~
 .idea/
 .vscode/*
-!.vscode/launch.json
 !.vscode/tasks.json
 !.vscode/extensions.json
 editors/vscode/node_modules/
